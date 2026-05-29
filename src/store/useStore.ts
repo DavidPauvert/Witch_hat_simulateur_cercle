@@ -8,12 +8,8 @@ import {
     Point,
 } from '../types';
 import { CONFIG } from '../config';
-import {
-    classifyDrawing,
-    ClassificationResult,
-} from '../parser/drawingClassifier';
-import { compileSpell } from '../compiler/spellBuilder';
 import { loadDictionary } from '../dictionary/dictionaryLoader';
+import { ClassificationResult } from '../parser/drawingClassifier';
 
 interface UIState {
     showGuides: boolean;
@@ -28,6 +24,7 @@ interface AppStore {
     pipeline: ClassificationResult | null;
     spellIR: SpellIR | null;
     previousRing: RingCandidate | null;
+    isComputing: boolean;
     uiState: UIState;
 
     // Actions
@@ -41,9 +38,15 @@ interface AppStore {
     setDiagnostics: (show: boolean) => void;
     setActiveTab: (tab: string) => void;
     recompute: () => void;
+    setStrokes: (strokes: Stroke[]) => void;
 }
 
 let nextStrokeId = 1;
+
+const parserWorker = new Worker(
+    new URL('../parser/parser.worker.ts', import.meta.url),
+    { type: 'module' },
+);
 
 export const useStore = create<AppStore>((set, get) => ({
     strokes: [],
@@ -52,6 +55,7 @@ export const useStore = create<AppStore>((set, get) => ({
     pipeline: null,
     spellIR: null,
     previousRing: null,
+    isComputing: false,
     uiState: {
         showGuides: true,
         showDiagnostics: false,
@@ -59,6 +63,16 @@ export const useStore = create<AppStore>((set, get) => ({
     },
 
     init: async () => {
+        parserWorker.onmessage = (event) => {
+            const { pipeline, spellIR } = event.data;
+            set({
+                pipeline,
+                spellIR,
+                previousRing: pipeline.ring,
+                isComputing: false,
+            });
+        };
+
         try {
             const dictionary = await loadDictionary();
             set({ dictionary });
@@ -123,22 +137,18 @@ export const useStore = create<AppStore>((set, get) => ({
         const { strokes, dictionary, previousRing } = get();
         if (!dictionary) return;
 
-        const pipeline = classifyDrawing({
+        set({ isComputing: true });
+
+        parserWorker.postMessage({
             strokes,
             previousRing,
             dictionary,
             config: CONFIG,
         });
+    },
 
-        const spellIR = compileSpell({
-            glyphAST: pipeline.glyphAST,
-            config: CONFIG,
-        });
-
-        set({
-            pipeline,
-            spellIR,
-            previousRing: pipeline.ring,
-        });
+    setStrokes: (strokes) => {
+        set({ strokes, previousRing: null });
+        get().recompute();
     },
 }));

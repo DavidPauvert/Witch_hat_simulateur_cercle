@@ -1,6 +1,12 @@
 import { clamp, degreesToRadians, normalizeAngleDeg } from '../utils/geometry';
 import { normalizeStrokesForTemplate } from './templateNormalizer';
 import { Point, Stroke, SymbolCandidate } from '../types';
+import {
+    wasmCountInk,
+    wasmMaskOverlap,
+    wasmOccupiedCells,
+    wasmRenderInkLayers,
+} from './wasmBridge';
 
 const INK_SIZE = 40;
 const CORE_RADIUS = 1;
@@ -87,57 +93,8 @@ function createLayer(size: number): Layer {
     };
 }
 
-function markMask(
-    mask: Uint8Array,
-    size: number,
-    x: number,
-    y: number,
-    radius: number,
-): void {
-    const centerX = Math.round(clamp(x, 0, 1) * (size - 1));
-    const centerY = Math.round(clamp(y, 0, 1) * (size - 1));
-    const radiusSq = radius * radius;
-
-    for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
-        for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-            if (offsetX * offsetX + offsetY * offsetY > radiusSq) {
-                continue;
-            }
-
-            const pixelX = centerX + offsetX;
-            const pixelY = centerY + offsetY;
-            if (pixelX < 0 || pixelX >= size || pixelY < 0 || pixelY >= size) {
-                continue;
-            }
-
-            mask[pixelY * size + pixelX] = 1;
-        }
-    }
-}
-
-function markInk(ink: Ink, size: number, x: number, y: number): void {
-    markMask(ink.core.mask, size, x, y, CORE_RADIUS);
-    markMask(ink.soft.mask, size, x, y, SOFT_RADIUS);
-    markMask(ink.loose.mask, size, x, y, LOOSE_RADIUS);
-}
-
-function drawSegment(ink: Ink, size: number, start: Point, end: Point): void {
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) * size * 2));
-
-    for (let index = 0; index <= steps; index += 1) {
-        const local = index / steps;
-        markInk(ink, size, start.x + dx * local, start.y + dy * local);
-    }
-}
-
 function countInk(mask: Uint8Array): number {
-    let ink = 0;
-    for (const pixel of mask) {
-        ink += pixel;
-    }
-    return ink;
+    return wasmCountInk(mask);
 }
 
 function renderInk(
@@ -145,33 +102,35 @@ function renderInk(
     rotationDeg: number = 0,
     size: number = INK_SIZE,
 ): Ink {
-    const ink: Ink = {
+    const transform = rotationTransform(rotationDeg);
+    const flatPoints: number[] = [];
+    
+    for (const stroke of strokes ?? []) {
+        if (!stroke?.length) continue;
+        for (const p of stroke) {
+            const rotated = rotatePoint(p, transform);
+            flatPoints.push(rotated.x);
+            flatPoints.push(rotated.y);
+        }
+        flatPoints.push(NaN);
+        flatPoints.push(NaN);
+    }
+
+    const layers = wasmRenderInkLayers(flatPoints, size, CORE_RADIUS, SOFT_RADIUS, LOOSE_RADIUS);
+    
+    if (layers) {
+        return {
+            core: { mask: layers.core, ink: countInk(layers.core) },
+            soft: { mask: layers.soft, ink: countInk(layers.soft) },
+            loose: { mask: layers.loose, ink: countInk(layers.loose) }
+        };
+    }
+
+    return {
         core: createLayer(size),
         soft: createLayer(size),
         loose: createLayer(size),
     };
-    const transform = rotationTransform(rotationDeg);
-
-    for (const stroke of strokes ?? []) {
-        if (!stroke?.length) {
-            continue;
-        }
-
-        const points = stroke.map((point) => rotatePoint(point, transform));
-        if (points.length === 1) {
-            markInk(ink, size, points[0].x, points[0].y);
-            continue;
-        }
-
-        for (let index = 1; index < points.length; index += 1) {
-            drawSegment(ink, size, points[index - 1], points[index]);
-        }
-    }
-
-    ink.core.ink = countInk(ink.core.mask);
-    ink.soft.ink = countInk(ink.soft.mask);
-    ink.loose.ink = countInk(ink.loose.mask);
-    return ink;
 }
 
 function templateInk(strokeTemplate: { strokes?: (Stroke | Point[])[] }): Ink {
@@ -218,13 +177,7 @@ function candidateInk(candidate: SymbolCandidate, rotationDeg: number): Ink {
 }
 
 function maskOverlap(a: Uint8Array, b: Uint8Array): number {
-    let overlap = 0;
-    for (let index = 0; index < a.length; index += 1) {
-        if (a[index] && b[index]) {
-            overlap += 1;
-        }
-    }
-    return overlap;
+    return wasmMaskOverlap(a, b);
 }
 
 function diceScore(
@@ -244,26 +197,7 @@ function occupiedCells(
     size: number = INK_SIZE,
     gridSize: number = REGION_GRID_SIZE,
 ): Uint8Array {
-    const cells = new Uint8Array(gridSize * gridSize);
-
-    for (let y = 0; y < size; y += 1) {
-        for (let x = 0; x < size; x += 1) {
-            if (!mask[y * size + x]) {
-                continue;
-            }
-            const cellX = Math.min(
-                gridSize - 1,
-                Math.floor((x / size) * gridSize),
-            );
-            const cellY = Math.min(
-                gridSize - 1,
-                Math.floor((y / size) * gridSize),
-            );
-            cells[cellY * gridSize + cellX] = 1;
-        }
-    }
-
-    return cells;
+    return wasmOccupiedCells(mask, size, gridSize);
 }
 
 function cellStats(candidateInk: Ink, referenceInk: Ink) {

@@ -16,6 +16,7 @@ import {
     TopologicalClosureResult,
 } from './topologicalFloodFill';
 import { CleanedStroke } from './strokeCleaner';
+import { wasmFitCircle } from './wasmBridge';
 
 const MIN_CLOSURE_RELEVANT_POINT_RATIO = 0.15;
 const RING_BIN_COUNT = 96;
@@ -73,6 +74,11 @@ function solve3(matrix: number[][], vector: number[]): number[] | null {
 function fitCircle(points: Point[]): Circle | null {
     if (points.length < 8) {
         return null;
+    }
+
+    const wasmResult = wasmFitCircle(points.flatMap(p => [p.x, p.y]));
+    if (wasmResult) {
+        return wasmResult;
     }
 
     let sumX = 0;
