@@ -34,27 +34,47 @@ export function cleanStrokes(
     rawStrokes: Stroke[],
     config: AppConfig,
 ): CleanedStroke[] {
-    return rawStrokes
-        .map((stroke) => {
-            let points = stroke.points.map((point) => ({ ...point }));
-            for (let pass = 0; pass < config.input.smoothingPasses; pass += 1) {
-                points = smoothPoints(points);
-            }
+    const cleaned: CleanedStroke[] = [];
+    let totalPoints = 0;
 
-            const length = pathLength(points);
-            const bounds = boundsForPoints(points);
+    for (const stroke of rawStrokes) {
+        if (cleaned.length >= config.limits.maxStrokes) break;
+        if (totalPoints >= config.limits.maxTotalPoints) break;
 
-            return {
-                ...stroke,
-                points,
-                metrics: {
-                    length,
-                    bounds,
-                    pointCount: points.length,
-                },
-            } as CleanedStroke;
-        })
-        .filter(
-            (stroke) => stroke.metrics.length >= config.input.minStrokeLength,
-        );
+        let points = stroke.points.map((point) => ({ ...point }));
+
+        // Enforce per-stroke point limit
+        if (points.length > config.limits.maxPointsPerStroke) {
+            points = points.slice(0, config.limits.maxPointsPerStroke);
+        }
+
+        // Enforce global point budget
+        if (totalPoints + points.length > config.limits.maxTotalPoints) {
+            points = points.slice(0, config.limits.maxTotalPoints - totalPoints);
+        }
+
+        if (points.length < 2) continue;
+
+        for (let pass = 0; pass < config.input.smoothingPasses; pass += 1) {
+            points = smoothPoints(points);
+        }
+
+        const length = pathLength(points);
+        if (length < config.input.minStrokeLength) continue;
+
+        const bounds = boundsForPoints(points);
+        totalPoints += points.length;
+
+        cleaned.push({
+            ...stroke,
+            points,
+            metrics: {
+                length,
+                bounds,
+                pointCount: points.length,
+            },
+        });
+    }
+
+    return cleaned;
 }

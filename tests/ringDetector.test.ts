@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { CONFIG } from '../src/config';
 import { classifyDrawing } from '../src/parser/drawingClassifier';
 import { detectRing } from '../src/parser/ringDetector';
 import { degreesToRadians } from '../src/utils/geometry';
 import { Stroke, Dictionary } from '../src/types';
+import { initWasm } from '../src/parser/wasmBridge';
 
 function arcStroke(
     id: string,
@@ -66,6 +67,9 @@ function closingStrokeAt(
 }
 
 describe('Ring Detector', () => {
+    beforeAll(async () => {
+        await initWasm();
+    });
     it('detects a sealed ring without outside strokes', () => {
         const openRing = openRingStroke();
         const closing = closingStroke();

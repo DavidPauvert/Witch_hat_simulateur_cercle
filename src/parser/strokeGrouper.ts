@@ -142,6 +142,63 @@ function buildCandidate(
     };
 }
 
+class SpatialGrid {
+    private cells = new Map<string, CleanedStroke[]>();
+    private cellSize: number;
+
+    constructor(cellSize: number) {
+        this.cellSize = cellSize;
+    }
+
+    private key(x: number, y: number): string {
+        return `${Math.floor(x / this.cellSize)},${Math.floor(y / this.cellSize)}`;
+    }
+
+    insert(stroke: CleanedStroke): void {
+        const bounds = stroke.metrics.bounds;
+        const xStart = Math.floor(bounds.minX / this.cellSize);
+        const xEnd = Math.floor(bounds.maxX / this.cellSize);
+        const yStart = Math.floor(bounds.minY / this.cellSize);
+        const yEnd = Math.floor(bounds.maxY / this.cellSize);
+
+        for (let x = xStart; x <= xEnd; x++) {
+            for (let y = yStart; y <= yEnd; y++) {
+                const k = `${x},${y}`;
+                const cell = this.cells.get(k) ?? [];
+                cell.push(stroke);
+                this.cells.set(k, cell);
+            }
+        }
+    }
+
+    query(stroke: CleanedStroke): Set<CleanedStroke> {
+        const neighbors = new Set<CleanedStroke>();
+        const bounds = stroke.metrics.bounds;
+        // Padding should cover the maximum possible grouping distance
+        // ring.radius * 0.2 is the max center distance
+        // Our cellSize is ring.radius * 0.25, so querying neighbors (1 cell radius) is enough.
+        const padding = this.cellSize;
+        const xStart = Math.floor((bounds.minX - padding) / this.cellSize);
+        const xEnd = Math.floor((bounds.maxX + padding) / this.cellSize);
+        const yStart = Math.floor((bounds.minY - padding) / this.cellSize);
+        const yEnd = Math.floor((bounds.maxY + padding) / this.cellSize);
+
+        for (let x = xStart; x <= xEnd; x++) {
+            for (let y = yStart; y <= yEnd; y++) {
+                const cell = this.cells.get(`${x},${y}`);
+                if (cell) {
+                    for (const s of cell) {
+                        if (s.id !== stroke.id) {
+                            neighbors.add(s);
+                        }
+                    }
+                }
+            }
+        }
+        return neighbors;
+    }
+}
+
 export function buildSymbolCandidates(
     strokes: CleanedStroke[],
     classifications: StrokeClassification[],
@@ -164,6 +221,13 @@ export function buildSymbolCandidates(
     const joinableStrokes = strokes.filter(
         (stroke) => classificationById.get(stroke.id)?.canJoinSymbol,
     );
+
+    // Initialize spatial grid with cell size based on ring radius
+    const grid = new SpatialGrid(ring.radius * 0.25);
+    for (const stroke of joinableStrokes) {
+        grid.insert(stroke);
+    }
+
     const visited = new Set<string>();
     const groups: CleanedStroke[][] = [];
 
@@ -180,7 +244,8 @@ export function buildSymbolCandidates(
             const current = queue.shift()!;
             group.push(current);
 
-            for (const other of joinableStrokes) {
+            const neighbors = grid.query(current);
+            for (const other of neighbors) {
                 if (visited.has(other.id)) {
                     continue;
                 }

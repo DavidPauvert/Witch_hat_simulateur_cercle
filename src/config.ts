@@ -14,6 +14,19 @@ export const CONFIG: AppConfig = {
         // Higher softens hand jitter but can distort sharp symbols.
         smoothingPasses: 1,
     },
+    limits: {
+        // Maximum number of strokes processed in a single pipeline run.
+        maxStrokes: 150,
+
+        // Maximum points per stroke; longer strokes are truncated.
+        maxPointsPerStroke: 800,
+
+        // Total point budget across all strokes.
+        maxTotalPoints: 10000,
+
+        // Maximum pixels for topological analysis raster (e.g. 1024x1024).
+        maxRasterArea: 1024 * 1024,
+    },
     ring: {
         // Canvas pixels; smallest ring radius accepted as spell paper boundary.
         minRadius: 70,

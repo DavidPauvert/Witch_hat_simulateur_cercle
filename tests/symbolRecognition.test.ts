@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { CONFIG } from '../src/config';
 import {
     boundsForStrokes,
@@ -9,6 +9,7 @@ import {
 } from '../src/utils/geometry';
 import { recognizeCandidates } from '../src/parser/symbolRecognizer';
 import { Dictionary, Stroke, SymbolCandidate, SymbolEntry } from '../src/types';
+import { initWasm } from '../src/parser/wasmBridge';
 
 import sigilsJson from '../src/dictionary/sigils.json';
 import signsJson from '../src/dictionary/signs.json';
@@ -201,6 +202,9 @@ function rotatePoint(point: any, center: any, transform: any) {
 }
 
 describe('Symbol Recognition', () => {
+    beforeAll(async () => {
+        await initWasm();
+    });
     it('recognizes overdraw as valid messy instead of rejecting the symbol', () => {
         const messyLine = buildCandidate([
             stroke('s1', [

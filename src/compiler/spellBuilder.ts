@@ -127,7 +127,24 @@ function calculateSpellDuration({
     quality: number;
     neatness: number;
 }): number {
-    return Infinity;
+    const min = SPELL_PARAMETER_TUNING.durationMinSeconds;
+    const max = SPELL_PARAMETER_TUNING.durationMaxSeconds;
+    const scale = SPELL_PARAMETER_TUNING.durationSecondsScale;
+    
+    // Base duration influenced by sigil semantic
+    const base = min + (primarySemantic.duration ?? 0.6) * scale;
+    
+    // Quality factor (0..1)
+    const qualityFactor = clamp(
+        quality * 0.4 +
+        neatness * 0.6
+    );
+    
+    // Apply deltas and quality curve
+    const biasedBase = base * (1 + (deltas.lifetimeBias ?? 0));
+    const finalDuration = biasedBase * Math.pow(qualityFactor, 1.2);
+
+    return clamp(finalDuration, min, max);
 }
 
 export function compileSpell({

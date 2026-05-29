@@ -64,17 +64,32 @@ function cellCenter(index: number, raster: Raster): Point {
     };
 }
 
-function createRaster(strokes: Stroke[]): Raster {
+function createRaster(strokes: Stroke[], config: AppConfig): Raster {
     const strokeRadius = STROKE_RADIUS_PX;
     const padding = PADDING_PX + strokeRadius + 2;
-    const cellSize = CELL_SIZE_PX;
     const sourceBounds = boundsForStrokes(strokes);
-    const offsetX = Math.floor(sourceBounds.minX - padding);
-    const offsetY = Math.floor(sourceBounds.minY - padding);
-    const maxX = Math.ceil(sourceBounds.maxX + padding);
-    const maxY = Math.ceil(sourceBounds.maxY + padding);
-    const width = Math.max(3, Math.ceil((maxX - offsetX) / cellSize) + 1);
-    const height = Math.max(3, Math.ceil((maxY - offsetY) / cellSize) + 1);
+    const offsetX_raw = Math.floor(sourceBounds.minX - padding);
+    const offsetY_raw = Math.floor(sourceBounds.minY - padding);
+    const maxX_raw = Math.ceil(sourceBounds.maxX + padding);
+    const maxY_raw = Math.ceil(sourceBounds.maxY + padding);
+    
+    const rawWidth = Math.max(3, maxX_raw - offsetX_raw + 1);
+    const rawHeight = Math.max(3, maxY_raw - offsetY_raw + 1);
+    
+    let cellSize = CELL_SIZE_PX;
+    const maxArea = config.limits.maxRasterArea;
+
+    if (rawWidth * rawHeight > maxArea) {
+        // Use a more aggressive target area to ensure we stay under the limit
+        const targetArea = maxArea * 0.9;
+        const scale = Math.sqrt(targetArea / (rawWidth * rawHeight));
+        cellSize = CELL_SIZE_PX / scale;
+    }
+
+    const offsetX = offsetX_raw;
+    const offsetY = offsetY_raw;
+    const width = Math.max(3, Math.ceil((maxX_raw - offsetX) / cellSize) + 1);
+    const height = Math.max(3, Math.ceil((maxY_raw - offsetY) / cellSize) + 1);
     const size = width * height;
 
     return {
@@ -395,7 +410,7 @@ export function analyzeTopologicalClosure(
         };
     }
 
-    const raster = createRaster(strokes);
+    const raster = createRaster(strokes, config);
     rasterizeStrokes(strokes, raster);
     floodExterior(raster);
 

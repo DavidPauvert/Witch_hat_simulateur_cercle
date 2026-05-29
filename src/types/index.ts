@@ -48,6 +48,12 @@ export interface AppConfig {
         minStrokeLength: number;
         smoothingPasses: number;
     };
+    limits: {
+        maxStrokes: number;
+        maxPointsPerStroke: number;
+        maxTotalPoints: number;
+        maxRasterArea: number;
+    };
     ring: {
         minRadius: number;
     };
