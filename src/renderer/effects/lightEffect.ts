@@ -19,7 +19,7 @@ export function drawLightEffect(
     const scale = effectScale(spellIR);
     const opacity = effectOpacity(spellIR);
     state.lightFrame = (state.lightFrame ?? 0) + dt;
-    
+
     const targetCount = scaledParticleCount(
         (34 + spellIR.force * 38) * (0.78 + scale * 0.28),
         spellIR,
@@ -29,7 +29,7 @@ export function drawLightEffect(
     while (state.particles.length < targetCount) {
         const angle = Math.random() * Math.PI * 2;
         const radius = Math.sqrt(Math.random()) * ring.radius * 0.45;
-        const speed = (5.0 + spellIR.force * 8.0);
+        const speed = 5 + spellIR.force * 8;
         const dirX = spellIR.direction?.x ?? 0;
         const dirY = spellIR.direction?.y ?? 0;
         const dirZ = spellIR.direction?.z ?? 1;
@@ -52,19 +52,19 @@ export function drawLightEffect(
         particle.x += particle.vx * dt;
         particle.y += particle.vy * dt;
         particle.z += particle.vz * dt;
-        
+
         // Light trails simulated by high speed and bloom-like glow
-        const alpha = (1.0 - particle.age / particle.life) * opacity;
+        const alpha = (1 - particle.age / particle.life) * opacity;
         if (alpha > 0) {
             state.webglParticles.push({
                 x: particle.x,
                 y: particle.y,
                 z: particle.z,
                 radius: particle.radius,
-                r: 1.0,
+                r: 1,
                 g: 0.98,
                 b: 0.8,
-                a: alpha * 0.9
+                a: alpha * 0.9,
             });
         }
     }

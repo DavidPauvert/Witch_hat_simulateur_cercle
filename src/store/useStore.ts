@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import {
     Stroke,
     Dictionary,
-    GlyphAST,
     SpellIR,
     RingCandidate,
     Point,
@@ -48,20 +47,39 @@ const parserWorker = new Worker(
     { type: 'module' },
 );
 
+/**
+ * The primary state management hub for the application, built with Zustand.
+ * It coordinates the raw drawing data, the symbol dictionary, and
+ * communication with the background Web Worker.
+ */
 export const useStore = create<AppStore>((set, get) => ({
+    // Current list of finished ink strokes.
     strokes: [],
+    // The stroke currently being drawn by the user.
     currentStroke: null,
+    // Reference dictionary of sigils and signs.
     dictionary: null,
+    // Intermediate results from the geometric pipeline.
     pipeline: null,
+    // High-level functional parameters for the spell.
     spellIR: null,
+    // The ring detected in the previous pass, used as a hint for the current pass.
     previousRing: null,
+    // Boolean flag for showing a loading state if needed.
     isComputing: false,
+
     uiState: {
         showGuides: true,
         showDiagnostics: false,
         activeTab: 'summary',
     },
 
+    /**
+     * Initializes the store:
+     * 1. Sets up the response handler for the background worker.
+     * 2. Loads the symbol definitions from JSON.
+     * 3. Triggers the first parser pass.
+     */
     init: async () => {
         parserWorker.onmessage = (event) => {
             const { pipeline, spellIR } = event.data;
@@ -82,12 +100,15 @@ export const useStore = create<AppStore>((set, get) => ({
         }
     },
 
+    /**
+     * Commits a sequence of points as a new finished stroke.
+     */
     addStroke: (points) => {
         const stroke: Stroke = {
             id: `s${nextStrokeId++}`,
             points: points.map((p) => ({ ...p })),
             startedAt: points[0]?.t ?? performance.now(),
-            endedAt: points[points.length - 1]?.t ?? performance.now(),
+            endedAt: points.at(-1)?.t ?? performance.now(),
         };
         set((state) => ({
             strokes: [...state.strokes, stroke],
@@ -96,21 +117,29 @@ export const useStore = create<AppStore>((set, get) => ({
         get().recompute();
     },
 
+    /** Updates the temporary 'preview' stroke while the user is still dragging. */
     setCurrentStroke: (currentStroke) => set({ currentStroke }),
 
+    /** Removes the most recently added stroke. */
     undo: () => {
         set((state) => ({
             strokes: state.strokes.slice(0, -1),
+            // Reset previous ring to force a fresh detection after an undo.
             previousRing: null,
         }));
         get().recompute();
     },
 
+    /** Clears all drawing data. */
     clear: () => {
         set({ strokes: [], previousRing: null, currentStroke: null });
         get().recompute();
     },
 
+    /**
+     * Scales all stroke coordinates.
+     * Called when the canvas is resized to ensure drawing remains aligned.
+     */
     scaleStrokes: (scaleX, scaleY) => {
         set((state) => ({
             strokes: state.strokes.map((stroke) => ({
@@ -126,6 +155,7 @@ export const useStore = create<AppStore>((set, get) => ({
         get().recompute();
     },
 
+    // UI State management setters.
     setGuides: (showGuides) =>
         set((state) => ({ uiState: { ...state.uiState, showGuides } })),
     setDiagnostics: (showDiagnostics) =>
@@ -133,6 +163,10 @@ export const useStore = create<AppStore>((set, get) => ({
     setActiveTab: (activeTab) =>
         set((state) => ({ uiState: { ...state.uiState, activeTab } })),
 
+    /**
+     * Offloads the heavy geometric analysis and spell compilation to a Web Worker.
+     * This prevents the main UI thread from stuttering during drawing.
+     */
     recompute: () => {
         const { strokes, dictionary, previousRing } = get();
         if (!dictionary) return;
@@ -147,6 +181,7 @@ export const useStore = create<AppStore>((set, get) => ({
         });
     },
 
+    /** Batch updates all strokes at once. */
     setStrokes: (strokes) => {
         set({ strokes, previousRing: null });
         get().recompute();

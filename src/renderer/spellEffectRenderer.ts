@@ -29,6 +29,9 @@ const FAILED_FLICKER_RADIUS_PULSE_SCALE = 0.02;
 
 import { WebGLRenderer } from './webgl/webglRenderer';
 
+/**
+ * Maps element IDs to their respective rendering functions.
+ */
 const EFFECTS: Record<
     string,
     (
@@ -47,6 +50,7 @@ const EFFECTS: Record<
     light: drawLightEffect,
 };
 
+/** Retrieves the total lifespan of the spell in milliseconds. */
 function spellDurationMs(spellIR: SpellIR): number {
     const durationSeconds = Number(spellIR?.duration);
     return (Number.isFinite(durationSeconds) || durationSeconds === Infinity) &&
@@ -55,6 +59,10 @@ function spellDurationMs(spellIR: SpellIR): number {
         : 0;
 }
 
+/**
+ * Calculates the current "emission" level of the spell (0 to 1).
+ * Emission is 1 while the spell is active and fades to 0 once the duration expires.
+ */
 function spellEmission(spellIR: SpellIR, timestamp: number): number {
     const durationMs = spellDurationMs(spellIR);
     if (
@@ -70,9 +78,15 @@ function spellEmission(spellIR: SpellIR, timestamp: number): number {
         return 1;
     }
 
+    // Start fading out after the duration has passed.
     return clamp(1 - (elapsed - durationMs) / SPELL_END_FADE_MS);
 }
 
+/**
+ * Orchestrates high-performance visual effects for spells.
+ * It combines traditional 2D canvas drawing (for UI/Glows) with
+ * a WebGL particle engine (for complex elemental effects).
+ */
 export class SpellEffectRenderer {
     canvas2d: HTMLCanvasElement;
     ctx2d: CanvasRenderingContext2D;
@@ -83,6 +97,9 @@ export class SpellEffectRenderer {
     lastSignature: string | null;
     lastTime: number | null;
 
+    /**
+     * Initializes the rendering pipeline with 2D and 3D canvases.
+     */
     constructor(
         canvas2d: HTMLCanvasElement,
         webglCanvas: HTMLCanvasElement,
@@ -93,11 +110,18 @@ export class SpellEffectRenderer {
         this.webglCanvas = webglCanvas;
         this.webglRenderer = new WebGLRenderer(webglCanvas);
         this.config = config;
+
+        // Initial state for the particle simulation.
         this.state = { particles: [], webglParticles: [] };
         this.lastSignature = null;
         this.lastTime = null;
     }
 
+    /**
+     * Main animation loop entry point.
+     * It handles the simulation timing, lifecycle management of effects,
+     * and coordinates both 2D and WebGL rendering passes.
+     */
     render(
         spellIR: SpellIR | null,
         ring: RingCandidate | undefined,
@@ -110,11 +134,14 @@ export class SpellEffectRenderer {
         ctx.clearRect(0, 0, width, height);
 
         if (!ring?.found || !spellIR) {
-            // Clear WebGL too
+            // If the spell is removed, clear the particle systems.
             this.webglRenderer.render([], width, height);
             return;
         }
 
+        // Complex: Time Delta (dt) calculation.
+        // We normalize the simulation speed based on frame rate (targeting 60fps).
+        // dt = 1.0 means exactly 16.6ms have passed.
         const dt = Math.min(
             DELTA_FRAME_MAX,
             Math.max(
@@ -126,10 +153,13 @@ export class SpellEffectRenderer {
         );
         this.lastTime = timestamp;
 
+        // If the spell configuration (signature) changes, reset particles to prevent artifacts.
         if (this.lastSignature !== spellIR.signature) {
             this.lastSignature = spellIR.signature;
             resetParticleState(this.state);
         }
+
+        // --- 2D UI Rendering ---
 
         if (!spellIR.active && options.showGuides) {
             this.drawRingGlow(ring, spellIR.prepared);
@@ -151,6 +181,8 @@ export class SpellEffectRenderer {
             return;
         }
 
+        // --- Elemental Effect Simulation ---
+
         const drawEffect = spellIR.element ? EFFECTS[spellIR.element] : null;
         if (!drawEffect) {
             this.webglRenderer.render([], width, height);
@@ -158,28 +190,31 @@ export class SpellEffectRenderer {
         }
 
         const emission = spellEmission(spellIR, timestamp);
+        // If the spell is dead and all particles have vanished, stop rendering.
         if (emission <= 0 && !this.state.particles.length) {
             this.webglRenderer.render([], width, height);
             return;
         }
 
+        // Prepare the IR with current emission level for the simulation step.
         // @ts-ignore - emission is transient for rendering
         const renderSpellIR: SpellIR = { ...spellIR, emission };
 
-        // Clear WebGL particles for this frame (they will be populated by drawEffect)
+        // Clear WebGL particle buffer for the current frame.
         this.state.webglParticles = [];
 
-        // Legacy 2D effects might still use the context directly for some things
-        // but we'll move most to WebGL
+        // 1. Run the specific elemental logic (Fire, Water, etc.).
+        // This logic updates the internal state and populates webglParticles.
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         drawEffect(ctx, this.state, renderSpellIR, ring, dt, this.config);
         ctx.restore();
 
-        // Render WebGL particles
+        // 2. Perform the actual WebGL draw call with the updated particle data.
         this.webglRenderer.render(this.state.webglParticles, width, height);
     }
 
+    /** Draws a subtle golden glow around the spell circle. */
     drawRingGlow(ring: RingCandidate, isPrepared: boolean) {
         const alpha = isPrepared
             ? RING_GLOW_PREPARED_ALPHA
@@ -199,6 +234,7 @@ export class SpellEffectRenderer {
         this.ctx2d.restore();
     }
 
+    /** Draws a soft teal pulsating glow inside the ring when a spell is valid but not yet cast. */
     drawPreparedGlow(ring: RingCandidate, timestamp: number) {
         const pulse =
             0.5 + Math.sin(timestamp / PREPARED_PULSE_PERIOD_MS) * 0.5;
@@ -216,6 +252,7 @@ export class SpellEffectRenderer {
         this.ctx2d.restore();
     }
 
+    /** Draws an aggressive red flickering ring when the spell drawing has errors. */
     drawFailedFlicker(ring: RingCandidate, timestamp: number) {
         const pulse = Math.max(
             0,

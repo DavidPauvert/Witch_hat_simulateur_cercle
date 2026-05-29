@@ -4,11 +4,20 @@ import { CanvasRenderer } from '../renderer/canvasRenderer';
 import { DrawingCapture } from '../input/drawingCapture';
 import { CONFIG } from '../config';
 
+/**
+ * The main interactive drawing panel of the application.
+ * It manages three overlapping canvas layers:
+ * 1. glyphCanvas: For drawing and displaying the hand-drawn ink and guides.
+ * 2. effectCanvas: For 2D visual highlights and glows.
+ * 3. webglCanvas: For complex 3D particle effects.
+ */
 const CanvasPanel: React.FC = () => {
     const glyphCanvasRef = useRef<HTMLCanvasElement>(null);
     const effectCanvasRef = useRef<HTMLCanvasElement>(null);
     const webglCanvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // The renderer instance that coordinates all three canvas layers.
     const [renderer, setRenderer] = useState<CanvasRenderer | null>(null);
 
     const {
@@ -22,8 +31,13 @@ const CanvasPanel: React.FC = () => {
         scaleStrokes,
     } = useStore();
 
+    // Initialize the renderer once the canvas elements are mounted in the DOM.
     useEffect(() => {
-        if (glyphCanvasRef.current && effectCanvasRef.current && webglCanvasRef.current) {
+        if (
+            glyphCanvasRef.current &&
+            effectCanvasRef.current &&
+            webglCanvasRef.current
+        ) {
             setRenderer(
                 new CanvasRenderer({
                     glyphCanvas: glyphCanvasRef.current,
@@ -35,6 +49,7 @@ const CanvasPanel: React.FC = () => {
         }
     }, []);
 
+    // Setup input capture for drawing.
     useEffect(() => {
         if (!glyphCanvasRef.current || !renderer) return;
 
@@ -45,7 +60,10 @@ const CanvasPanel: React.FC = () => {
 
         capture.enable();
 
-        // Lock input if ring is complete or invalid structure
+        // Complex: Input Locking Logic.
+        // Once a spell is "sealed" (ring is closed) or has structural errors
+        // (like multiple rings), we lock the input to prevent further drawing
+        // and allow the user to focus on the activated spell effect.
         const ringClosed = Boolean(pipeline?.ring?.complete);
         const hasUnsupportedMultipleRings = Boolean(
             pipeline?.ring?.unsupportedMultipleRings?.length,
@@ -62,11 +80,13 @@ const CanvasPanel: React.FC = () => {
         return () => capture.disable();
     }, [renderer, addStroke, setCurrentStroke, pipeline]);
 
+    // Main animation and rendering loop.
     useEffect(() => {
         let animationFrameId: number;
 
         const loop = (timestamp: number) => {
             if (renderer) {
+                // 1. Render the physical drawing and ink.
                 renderer.renderGlyph({
                     strokes,
                     currentStroke,
@@ -75,6 +95,7 @@ const CanvasPanel: React.FC = () => {
                     showDebug: uiState.showDiagnostics,
                 });
 
+                // 2. If the spell is active, render the activation glow animation.
                 if (spellIR?.active) {
                     renderer.renderActivatedGlyph({
                         activatedAt: spellIR.activatedAt!,
@@ -85,6 +106,7 @@ const CanvasPanel: React.FC = () => {
                     });
                 }
 
+                // 3. Render the elemental WebGL effects.
                 renderer.renderEffect({
                     spellIR,
                     ring: pipeline?.ring,
@@ -99,7 +121,7 @@ const CanvasPanel: React.FC = () => {
         return () => cancelAnimationFrame(animationFrameId);
     }, [renderer, strokes, currentStroke, pipeline, spellIR, uiState]);
 
-    // Handle resizing
+    // Handle container resizing and canvas coordinate scaling.
     useEffect(() => {
         if (
             !containerRef.current ||
@@ -120,6 +142,7 @@ const CanvasPanel: React.FC = () => {
 
             if (width === oldWidth && height === oldHeight) return;
 
+            // Update canvas buffer sizes to match CSS display size.
             glyphCanvasRef.current!.width = width;
             glyphCanvasRef.current!.height = height;
             effectCanvasRef.current!.width = width;
@@ -127,6 +150,7 @@ const CanvasPanel: React.FC = () => {
             webglCanvasRef.current!.width = width;
             webglCanvasRef.current!.height = height;
 
+            // If the canvas resized, scale all existing strokes to maintain relative positions.
             if (oldWidth > 0 && oldHeight > 0) {
                 scaleStrokes(width / oldWidth, height / oldHeight);
             }

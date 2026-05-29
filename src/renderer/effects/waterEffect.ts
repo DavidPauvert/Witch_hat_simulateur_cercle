@@ -6,18 +6,15 @@ import {
 import {
     activePortalPlane,
     convergenceFlow,
-    convergePoint,
     effectFocus,
     effectGravity,
     effectOpacity,
     effectScale,
     effectSuspension,
-    particleAlpha,
     portalOutDirection,
     pruneParticles,
     scaledParticleCount,
     spellLifetimeFrames,
-    steadyParticleAlpha,
     EffectState,
     Portal,
     ConvergenceFlow,
@@ -179,12 +176,12 @@ function spawnSuspendedWaterParticle(
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.sqrt(Math.random()) * flow.suspendedRadius;
     const phase = randomBetween(0, Math.PI * 2);
-    
+
     // Position in paper space (Z is up)
     const homeX = ring.center.x + Math.cos(angle) * radius;
     const homeY = ring.center.y + Math.sin(angle) * radius;
     const homeZ = flow.suspendedHeight;
-    
+
     const baseRadius = randomBetween(7.4, 14.6) * flow.radiusScale;
 
     return {
@@ -221,12 +218,12 @@ function spawnWaterParticle(
     const radius = Math.sqrt(Math.random()) * ring.radius * 0.3;
     const sourceX = ring.center.x + Math.cos(angle) * radius;
     const sourceY = ring.center.y + Math.sin(angle) * radius;
-    
-    const speed = (2.0 + spellIR.force * 4.0);
+
+    const speed = 2 + spellIR.force * 4;
     const dirX = spellIR.direction?.x ?? 0;
     const dirY = spellIR.direction?.y ?? 0;
     const dirZ = spellIR.direction?.z ?? 1;
-    
+
     const jitter = (1 - spellIR.stability) * 0.8;
 
     return {
@@ -253,8 +250,7 @@ function updateSuspendedWaterParticle(
 
     const targetX =
         particle.homeX +
-        Math.cos(particle.phase + particle.age * 0.026) *
-            flow.suspendedWander;
+        Math.cos(particle.phase + particle.age * 0.026) * flow.suspendedWander;
     const targetY =
         particle.homeY +
         Math.sin(particle.phase * 1.4 + particle.age * 0.028) *
@@ -294,7 +290,7 @@ function updateWaterParticle(particle: any, flow: WaterFlow, dt: number) {
 
     // Gravity
     particle.vz -= 0.08 * dt;
-    
+
     // Drag
     particle.vx *= 0.99;
     particle.vy *= 0.99;
@@ -320,7 +316,8 @@ function queueWaterParticle(
     spellIR: SpellIR,
     opacity: number,
 ) {
-    const alpha = (1.0 - particle.age / particle.life) * opacity * WATER_ALPHA_SCALE;
+    const alpha =
+        (1 - particle.age / particle.life) * opacity * WATER_ALPHA_SCALE;
     if (alpha <= 0) return;
 
     // Water colors: blue to light blue
@@ -333,7 +330,10 @@ function queueWaterParticle(
         y: particle.y,
         z: particle.z,
         radius: particle.radius,
-        r, g, b, a: alpha
+        r,
+        g,
+        b,
+        a: alpha,
     });
 }
 
@@ -350,7 +350,7 @@ export function drawWaterEffect(
     const portal = activePortalPlane(ctx.canvas, ring);
     state.waterFrame = (state.waterFrame ?? 0) + dt;
     const flow = waterFlowConfig(spellIR, ring, portal, state.waterFrame);
-    
+
     const targetCount = scaledParticleCount(
         config.renderer.particleBaseCount * (0.66 + scale * 0.22),
         spellIR,

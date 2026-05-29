@@ -1,6 +1,21 @@
 import { clamp, clampSigned, vectorFromAngleDeg } from '../utils/geometry';
 import { RecognitionResult, Vector, Manifestation } from '../types';
 
+interface SignDeltas {
+    force: number;
+    focus: number;
+    spread: number;
+    range: number;
+    lifetimeBias: number;
+    directionWeight: number;
+}
+
+export interface AggregateManifestationsResult {
+    primaryManifestation: string;
+    manifestations: Record<string, Manifestation>;
+    manifestationInfluence: Record<string, number>;
+}
+
 const DELTA_TARGETS = [
     'force',
     'focus',
@@ -60,35 +75,39 @@ const CONVERGENCE_TUNING = {
     rigidityRadiusScale: 0.18,
 };
 
+/** Retrieves the semantic manifestation ID (e.g. 'convergence') associated with a recognized sign. */
 function manifestationId(sign: RecognitionResult): string {
     return sign.semantic?.manifestation ?? sign.id;
 }
 
+/**
+ * Calculates the directional vector of a single sign.
+ * Depending on the sign's definition, the direction can be based on its position,
+ * its orientation (path), or a fixed inward-facing rule.
+ */
 function signDirection(sign: RecognitionResult): Vector {
     switch (sign.semantic?.directionMode) {
         case 'orientation':
+            // The direction follows the path the user drew.
             return vectorFromAngleDeg(
                 sign.directedOrientationDeg ?? sign.orientationDeg,
             );
         case 'inward':
+            // The direction always points towards the center of the spell ring.
             return vectorFromAngleDeg(
                 sign.angleDeg + INWARD_DIRECTION_OFFSET_DEG,
             );
         case 'position':
         default:
+            // The direction is radially outward from the center to the sign.
             return vectorFromAngleDeg(sign.angleDeg);
     }
 }
 
-interface SignDeltas {
-    force: number;
-    focus: number;
-    spread: number;
-    range: number;
-    lifetimeBias: number;
-    directionWeight: number;
-}
-
+/**
+ * Calculates how the specific "style" of a hand-drawn sign modifies its properties.
+ * Elongated or imbalanced signs can add extra force or focus to a spell.
+ */
 function signShapeDeltas(sign: RecognitionResult): SignDeltas {
     const shape = sign.shape ?? {};
     const axisDominance = shape.axisDominance ?? 0;
@@ -120,6 +139,10 @@ function signShapeDeltas(sign: RecognitionResult): SignDeltas {
     };
 }
 
+/**
+ * Calculates the total "importance" or strength of a sign based on its physical properties.
+ * Larger, longer, and more confidently drawn signs have a bigger impact on the spell.
+ */
 export function signInfluence(sign: RecognitionResult): number {
     const sizeWeight = clamp(
         SIGN_INFLUENCE_TUNING.sizeBase +
@@ -137,14 +160,16 @@ export function signInfluence(sign: RecognitionResult): number {
         sign.layer === 'outer'
             ? SIGN_INFLUENCE_TUNING.layerOuter
             : sign.layer === 'middle'
-              ? SIGN_INFLUENCE_TUNING.layerMiddle
-              : SIGN_INFLUENCE_TUNING.layerOther;
+            ? SIGN_INFLUENCE_TUNING.layerMiddle
+            : SIGN_INFLUENCE_TUNING.layerOther;
     const distanceWeight = clamp(
         SIGN_INFLUENCE_TUNING.distanceBase +
             sign.radiusNorm * SIGN_INFLUENCE_TUNING.distanceScale,
         SIGN_INFLUENCE_TUNING.distanceMin,
         SIGN_INFLUENCE_TUNING.distanceMax,
     );
+
+    // Combine confidence, neatness, and geometry into a final 0..1 influence score.
     return clamp(
         sign.confidence *
             (sign.neatness ?? 0.6) *
@@ -155,6 +180,15 @@ export function signInfluence(sign: RecognitionResult): number {
     );
 }
 
+/**
+ * Calculates the parameters for a "convergence" manifestation.
+ *
+ * Complex: Center of Gravity calculation.
+ * If multiple convergence signs are drawn, this function finds their "weighted center".
+ * The resulting point is where the spell effect will focus its energy.
+ * It also determines the radius and rigidity of the convergence area based on
+ * the spread and influence of the contributing signs.
+ */
 function convergenceProfile(
     weightedSigns: { sign: RecognitionResult; influence: number }[],
     strength: number,
@@ -171,11 +205,13 @@ function convergenceProfile(
         };
     }
 
+    // Accumulate the weighted positions and properties of all signs.
     const weighted = weightedSigns.reduce(
         (sum, { sign, influence }) => {
             const radial = clamp(sign.radiusNorm ?? 0.5);
             const direction = vectorFromAngleDeg(sign.angleDeg ?? 0);
             const size = sign.sizeNorm ?? 0;
+            // Signs drawn further out have more "leverage" on the focal point.
             const placementWeight = influence * (0.7 + radial * 0.45);
 
             return {
@@ -193,13 +229,11 @@ function convergenceProfile(
     const averageRadius = weighted.radius / totalInfluence;
     const x =
         weighted.placementWeight > 0
-            ? (weighted.x / weighted.placementWeight) *
-              CONVERGENCE_TUNING.pointScale
+            ? (weighted.x / weighted.placementWeight) * CONVERGENCE_TUNING.pointScale
             : 0;
     const y =
         weighted.placementWeight > 0
-            ? (weighted.y / weighted.placementWeight) *
-              CONVERGENCE_TUNING.pointScale
+            ? (weighted.y / weighted.placementWeight) * CONVERGENCE_TUNING.pointScale
             : 0;
 
     return {
@@ -207,6 +241,7 @@ function convergenceProfile(
             x: clampSigned(x, CONVERGENCE_TUNING.pointLimit),
             y: clampSigned(y, CONVERGENCE_TUNING.pointLimit),
         },
+        // The radius of the effect shrinks as the total strength and average sign size increase.
         radius: clamp(
             CONVERGENCE_TUNING.radiusBase -
                 strength * CONVERGENCE_TUNING.radiusStrengthScale -
@@ -215,6 +250,7 @@ function convergenceProfile(
             CONVERGENCE_TUNING.radiusMin,
             CONVERGENCE_TUNING.radiusMax,
         ),
+        // Rigidity determines how "stable" the focal point is.
         rigidity: clamp(
             strength *
                 (CONVERGENCE_TUNING.rigidityBase +
@@ -224,6 +260,7 @@ function convergenceProfile(
     };
 }
 
+/** Calculates how much a sign's orientation impacts the total directional pull of the spell. */
 function signDirectionWeight(sign: RecognitionResult): number {
     const featureDeltas = signShapeDeltas(sign);
     return (
@@ -237,12 +274,12 @@ function signDirectionWeight(sign: RecognitionResult): number {
     );
 }
 
-export interface AggregateManifestationsResult {
-    primaryManifestation: string;
-    manifestations: Record<string, Manifestation>;
-    manifestationInfluence: Record<string, number>;
-}
-
+/**
+ * Groups all recognized signs by their manifestation type and calculates their combined properties.
+ *
+ * @param signs - All recognized signs in the drawing.
+ * @returns An object containing the primary manifestation and detailed data for each active one.
+ */
 export function aggregateManifestations(
     signs: RecognitionResult[],
 ): AggregateManifestationsResult {
@@ -268,6 +305,8 @@ export function aggregateManifestations(
             signs: { sign: RecognitionResult; influence: number }[];
         }
     >();
+
+    // Group contributes to manifestations.
     signs.forEach((sign) => {
         const id = manifestationId(sign);
         const influence = signInfluence(sign);
@@ -280,11 +319,14 @@ export function aggregateManifestations(
     const sortedGroups = [...groups.values()].sort(
         (a, b) => b.totalInfluence - a.totalInfluence,
     );
+
+    // Convert groups into functional Manifestation objects.
     const manifestations: Record<string, Manifestation> = Object.fromEntries(
         sortedGroups.map((group) => {
             const strength = clamp(group.totalInfluence);
             const base: Manifestation = { strength };
 
+            // Special handling for convergence which has positional parameters.
             if (group.id === 'convergence') {
                 return [
                     group.id,
@@ -305,6 +347,11 @@ export function aggregateManifestations(
     };
 }
 
+/**
+ * Combines the directional vectors of all signs into a single dominant direction.
+ * If signs point in opposite directions, they can cancel each other out,
+ * leading to a lower "direction coherence".
+ */
 export function combineSignDirection(
     signs: RecognitionResult[],
 ): Vector & { strength: number } {
@@ -340,6 +387,10 @@ export function combineSignDirection(
     };
 }
 
+/**
+ * Aggregates all numeric parameter modifications (deltas) from the drawn signs.
+ * Signs can increase or decrease properties like force, focus, and range.
+ */
 export function aggregateSemanticDeltas(
     signs: RecognitionResult[],
 ): Record<DeltaTarget, number> {

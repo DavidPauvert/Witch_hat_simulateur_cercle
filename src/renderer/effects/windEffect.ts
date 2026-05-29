@@ -19,17 +19,17 @@ export function drawWindEffect(
     const scale = effectScale(spellIR);
     const opacity = effectOpacity(spellIR);
     state.windFrame = (state.windFrame ?? 0) + dt;
-    
+
     const targetCount = scaledParticleCount(
         (92 + spellIR.force * 104) * (0.82 + scale * 0.32),
         spellIR,
         config,
     );
-    
+
     while (state.particles.length < targetCount) {
         const angle = Math.random() * Math.PI * 2;
         const radius = Math.sqrt(Math.random()) * ring.radius * 0.4;
-        const speed = (3.0 + spellIR.force * 5.0);
+        const speed = 3 + spellIR.force * 5;
         const dirX = spellIR.direction?.x ?? 0;
         const dirY = spellIR.direction?.y ?? 0;
         const dirZ = spellIR.direction?.z ?? 1;
@@ -52,13 +52,13 @@ export function drawWindEffect(
         particle.x += particle.vx * dt;
         particle.y += particle.vy * dt;
         particle.z += particle.vz * dt;
-        
+
         // Wind drag/lift
         particle.vx *= 0.99;
         particle.vy *= 0.99;
         particle.vz *= 0.99;
 
-        const alpha = (1.0 - particle.age / particle.life) * opacity;
+        const alpha = (1 - particle.age / particle.life) * opacity;
         if (alpha > 0) {
             state.webglParticles.push({
                 x: particle.x,
@@ -68,7 +68,7 @@ export function drawWindEffect(
                 r: 0.8,
                 g: 0.95,
                 b: 0.9,
-                a: alpha * 0.4
+                a: alpha * 0.4,
             });
         }
     }

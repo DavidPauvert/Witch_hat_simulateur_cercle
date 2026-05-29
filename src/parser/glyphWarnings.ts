@@ -1,3 +1,8 @@
+/**
+ * A collection of standardized warning keys that the parser can return.
+ * These are used by the UI to show specific feedback to the user about why
+ * their drawing might not be working as expected (e.g. ring not closed, sigil missing).
+ */
 export const GLYPH_WARNINGS = Object.freeze({
     noRingDetected: 'no_ring_detected',
     ringIncomplete: 'ring_incomplete',

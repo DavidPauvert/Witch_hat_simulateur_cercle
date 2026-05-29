@@ -7,9 +7,17 @@ import DictionaryPanel from './components/DictionaryPanel';
 import DiagnosticsPanel from './components/DiagnosticsPanel';
 import SpellSummary from './components/SpellSummary';
 
+/**
+ * Root component of the application.
+ * It sets up the main workspace layout using a grid with three columns:
+ * 1. Left sidebar for controls and real-time spell state.
+ * 2. Center area for the drawing canvas.
+ * 3. Right sidebar for the symbol dictionary and advanced diagnostics.
+ */
 const App: React.FC = () => {
     const { init, uiState, setActiveTab } = useStore();
 
+    // Initialize the application store (load dictionaries, setup worker) on mount.
     useEffect(() => {
         init();
     }, [init]);
@@ -19,7 +27,7 @@ const App: React.FC = () => {
             <Header />
 
             <main className="workspace grid gap-[18px] flex-1 min-h-0 grid-cols-[minmax(230px,0.8fr)_minmax(0,2.2fr)_minmax(280px,1fr)]">
-                {/* Left Sidebar: Controls & Summary */}
+                {/* Left Sidebar: Contains global drawing settings and a summary of the current spell. */}
                 <aside className="wha-panel" aria-label="Spell controls">
                     <div className="flex-1 overflow-y-auto p-[14px] flex flex-col custom-scrollbar">
                         <ControlPanel />
@@ -32,7 +40,7 @@ const App: React.FC = () => {
                     </div>
                 </aside>
 
-                {/* Center: Canvas */}
+                {/* Center Section: The interactive drawing surface where the user creates spell diagrams. */}
                 <section
                     className="wha-panel"
                     aria-label="Spell drawing surface"
@@ -40,7 +48,7 @@ const App: React.FC = () => {
                     <CanvasPanel />
                 </section>
 
-                {/* Right Sidebar: Tabs for Dictionary/Diagnostics */}
+                {/* Right Sidebar: Switchable tabs for the reference dictionary and technical AST diagnostics. */}
                 <aside
                     className="wha-panel"
                     aria-label="Dictionary and diagnostics"
@@ -77,16 +85,7 @@ const App: React.FC = () => {
             <footer className="app-footer grid gap-1 mt-[14px] text-[12px] text-[rgba(255,249,232,0.78)] text-left leading-[1.4] flex-shrink-0 font-sans">
                 <p>
                     Unofficial fan-made spell diagram simulator inspired by
-                    Witch Hat Atelier. This project is not affiliated with,
-                    endorsed by, or sponsored by the official creators,
-                    publishers, licensors, or production partners.
-                </p>
-                <p>
-                    Witch Hat Atelier and related names, artwork, symbols, and
-                    trademarks belong to their respective rights holders. The
-                    sigils, signs, and spell effects here are partial fan
-                    references and programming-language interpretations for
-                    learning and experimentation.
+                    Witch Hat Atelier.
                 </p>
             </footer>
         </div>

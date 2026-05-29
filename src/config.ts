@@ -1,5 +1,10 @@
 import { AppConfig } from './types';
 
+/**
+ * Global configuration object for the application.
+ * It contains all tuning constants for input smoothing, performance limits,
+ * geometric layer boundaries, recognition thresholds, and visual effect rendering.
+ */
 export const CONFIG: AppConfig = {
     // String version tag shown in diagnostics.
     appVersion: '0.1.0-poc',

@@ -36,6 +36,14 @@ const TOPOLOGY_RING_PRUNE_MAX_ANGULAR_SPAN_DEG = 24;
 const SAME_RING_CENTER_DISTANCE_RATIO = 0.22;
 const SAME_RING_RADIUS_RATIO = 0.18;
 
+/**
+ * Solves a 3x3 system of linear equations using Gaussian elimination with partial pivoting.
+ * This is used by the circle fitting algorithm to find the center and radius.
+ *
+ * @param matrix - A 3x3 array representing the coefficients.
+ * @param vector - A 3-element array representing the constants.
+ * @returns The solution vector [x, y, z] or null if the matrix is singular.
+ */
 function solve3(matrix: number[][], vector: number[]): number[] | null {
     const a = matrix.map((row, index) => [...row, vector[index]]);
 
@@ -48,15 +56,17 @@ function solve3(matrix: number[][], vector: number[]): number[] | null {
         }
 
         if (Math.abs(a[pivot][column]) < 1e-8) {
-            return null;
+            return null; // Matrix is singular or near-singular.
         }
 
+        // Swap rows.
         [a[column], a[pivot]] = [a[pivot], a[column]];
         const divisor = a[column][column];
         for (let item = column; item < 4; item += 1) {
             a[column][item] /= divisor;
         }
 
+        // Eliminate other rows.
         for (let row = 0; row < 3; row += 1) {
             if (row === column) {
                 continue;
@@ -71,16 +81,27 @@ function solve3(matrix: number[][], vector: number[]): number[] | null {
     return [a[0][3], a[1][3], a[2][3]];
 }
 
+/**
+ * Fits a circle to a set of points using the Least Squares method.
+ * It tries to minimize the sum of the squared distances from the points to the circle's perimeter.
+ *
+ * @param points - The array of points to fit.
+ * @returns A Circle object with center and radius, or null if fitting fails.
+ */
 function fitCircle(points: Point[]): Circle | null {
     if (points.length < 8) {
         return null;
     }
 
-    const wasmResult = wasmFitCircle(points.flatMap(p => [p.x, p.y]));
+    // Try to use WASM version first for better performance if available.
+    const wasmResult = wasmFitCircle(points.flatMap((p) => [p.x, p.y]));
     if (wasmResult) {
         return wasmResult;
     }
 
+    // Complex: Least Squares Circle Fit.
+    // We solve for the parameters of the equation: x^2 + y^2 + ax + by + c = 0.
+    // The center (cx, cy) and radius (r) are then derived from a, b, and c.
     let sumX = 0;
     let sumY = 0;
     let sumX2 = 0;
@@ -133,6 +154,10 @@ function fitCircle(points: Point[]): Circle | null {
     };
 }
 
+/**
+ * Estimates a circle based on the bounding box of the strokes.
+ * Used as a fallback when precise fitting fails.
+ */
 function fallbackCircle(strokes: Stroke[]): Circle {
     const bounds = boundsForStrokes(strokes);
     return {
@@ -141,11 +166,16 @@ function fallbackCircle(strokes: Stroke[]): Circle {
     };
 }
 
+/** Marks a specific angular bin as containing ink. */
 function markAngle(bins: boolean[], angleDeg: number): void {
     const bin = Math.floor((angleDeg / 360) * bins.length) % bins.length;
     bins[bin] = true;
 }
 
+/**
+ * Finds the largest contiguous sequence of empty angular bins.
+ * This identifies the biggest "hole" in a hand-drawn circle.
+ */
 function largestGap(bins: boolean[]): {
     startAngle: number;
     endAngle: number;
@@ -157,9 +187,12 @@ function largestGap(bins: boolean[]): {
     let currentStart = 0;
     let currentLength = 0;
 
+    // We loop twice (size * 2) to handle gaps that wrap around the 360/0 degree boundary.
     for (let index = 0; index < size * 2; index += 1) {
         const bin = bins[index % size];
-        if (!bin) {
+        if (bin) {
+            currentLength = 0;
+        } else {
             if (currentLength === 0) {
                 currentStart = index;
             }
@@ -168,8 +201,6 @@ function largestGap(bins: boolean[]): {
                 bestStart = currentStart;
                 bestLength = currentLength;
             }
-        } else {
-            currentLength = 0;
         }
     }
 
@@ -181,6 +212,7 @@ function largestGap(bins: boolean[]): {
     };
 }
 
+/** Calculates the distance threshold for points to be considered "on the circle line". */
 function openCoverageHalfWidth(radius: number, config: AppConfig): number {
     return Math.max(
         OPEN_COVERAGE_HALF_WIDTH_PX,
@@ -188,6 +220,15 @@ function openCoverageHalfWidth(radius: number, config: AppConfig): number {
     );
 }
 
+/**
+ * Analyzes a single stroke to see how much of it follows the path of a given circle.
+ *
+ * @param stroke - The stroke to analyze.
+ * @param circle - The reference circle.
+ * @param config - Application configuration.
+ * @param bins - Optional array to track angular coverage.
+ * @returns Metrics including total length and length near the circle perimeter.
+ */
 function strokeCircleMetrics(
     stroke: Stroke,
     circle: Circle,
@@ -199,6 +240,7 @@ function strokeCircleMetrics(
     let totalLength = 0;
     let nearLength = 0;
 
+    // We sample the stroke at regular intervals to get an accurate measurement of its path.
     for (let index = 1; index < stroke.points.length; index += 1) {
         const previous = stroke.points[index - 1];
         const current = stroke.points[index];
@@ -217,6 +259,7 @@ function strokeCircleMetrics(
                 x: previous.x + (current.x - previous.x) * t,
                 y: previous.y + (current.y - previous.y) * t,
             };
+            // Check if the point is within a tolerance band around the circle's edge.
             const nearCircle =
                 Math.abs(distance(point, circle.center) - circle.radius) <=
                 halfWidth;
@@ -236,6 +279,10 @@ function strokeCircleMetrics(
     };
 }
 
+/**
+ * Measures the angular coverage of a set of strokes relative to a circle.
+ * This determines how much of the "circle" has been drawn (e.g., 50% vs 100%).
+ */
 function measureOpenCoverage(
     strokes: Stroke[],
     circle: Circle,
@@ -259,10 +306,20 @@ function measureOpenCoverage(
         coverageRatio,
         gap,
         gapArcLength: degreesToRadians(gap.sizeDegrees) * circle.radius,
+        // The ratio of total ink that actually lies on the circle perimeter.
         nearCircleInkRatio: totalLength > 0 ? nearLength / totalLength : 0,
     };
 }
 
+/**
+ * Performs a comprehensive measurement of a ring candidate, calculating quality metrics.
+ *
+ * @param strokes - Strokes forming the ring.
+ * @param config - App configuration.
+ * @param referenceRing - Optional previous ring to keep center/radius stable.
+ * @param topology - Optional topological analysis results for closed loops.
+ * @returns A RingCandidate with detailed metrics.
+ */
 function measureRing(
     strokes: Stroke[],
     config: AppConfig,
@@ -270,6 +327,7 @@ function measureRing(
     topology: TopologicalClosureResult | null = null,
 ): RingCandidate | null {
     const points = allPoints(strokes);
+    // If it's not topologically closed, we need enough points to even try a fit.
     if (points.length < 8 && !topology?.closed) {
         return null;
     }
@@ -290,37 +348,49 @@ function measureRing(
     }
 
     const radialDistances = points.map((point) => distance(point, center));
+    // Residual is the average deviation from the ideal circle radius.
     const residual = topology?.closed
         ? (topology.normalizedRmse ?? 0)
         : stddev(radialDistances) / Math.max(1, radius);
+
     const bounds = points.length
         ? boundsForStrokes(strokes)
         : { width: radius * 2, height: radius * 2 };
     const aspect =
         Math.min(bounds.width, bounds.height) /
         Math.max(1, Math.max(bounds.width, bounds.height));
+
+    // Heuristics for quality metrics:
     const fittedRoundness = clamp((1 - residual * 3.1) * 0.78 + aspect * 0.22);
     const roundness = topology?.closed
         ? (topology?.perfection ?? 0)
         : (referenceRing?.roundness ?? fittedRoundness);
+
     const coverage = measureOpenCoverage(strokes, { center, radius }, config);
     const complete = Boolean(topology?.closed);
     const completeness = complete ? 1 : coverage.coverageRatio;
+
     const circumference = Math.PI * 2 * radius;
     const inkLength = strokes.reduce(
         (sum, stroke) => sum + strokeLength(stroke),
         0,
     );
+    // Overdraw measures how many times the user drew over the same path.
     const overdraw = Math.max(0, inkLength / Math.max(1, circumference) - 1.08);
+
     const closureQuality = complete
         ? (topology?.perfection ?? 0)
         : clamp(coverage.coverageRatio);
+
+    // Smoothness considers both the fit residual and how much of the ink is "on the line".
     const lineSmoothness = clamp(
         (complete ? (topology?.perfection ?? 0) : coverage.nearCircleInkRatio) *
             0.72 +
             (1 - residual) * 0.28 -
             overdraw * 0.12,
     );
+
+    // Neatness is a weighted average of roundness, smoothness, and closure.
     const neatness = clamp(
         roundness * 0.42 + lineSmoothness * 0.36 + closureQuality * 0.22,
     );
@@ -342,6 +412,9 @@ function measureRing(
     };
 }
 
+/**
+ * Finds all strokes that seem to contribute to a partial circle identified by a seed.
+ */
 function collectOpenRingStrokes(
     seedRing: RingCandidate,
     strokes: Stroke[],
@@ -354,10 +427,12 @@ function collectOpenRingStrokes(
         }
 
         const metrics = strokeCircleMetrics(stroke, circle, config);
+        // A stroke is collected if a significant portion of it follows the seed's circle.
         return metrics.nearRatio >= OPEN_COLLECTION_MIN_RATIO;
     });
 }
 
+/** Calculates the angular span and bin coverage of a single stroke. */
 function strokeAngularCoverage(
     stroke: Stroke,
     circle: Circle,
@@ -373,6 +448,10 @@ function strokeAngularCoverage(
     };
 }
 
+/**
+ * Optimization: Removes small, redundant strokes from a closed ring.
+ * If a ring is already complete, we don't need tiny overlapping segments.
+ */
 function pruneRedundantShortRingStrokes(
     ringStrokes: Stroke[],
     circle: Circle,
@@ -388,6 +467,7 @@ function pruneRedundantShortRingStrokes(
         }
 
         const coverage = strokeAngularCoverage(stroke, circle, config);
+        // Don't prune strokes that cover a large angular span.
         if (
             coverage.angularSpanDeg > TOPOLOGY_RING_PRUNE_MAX_ANGULAR_SPAN_DEG
         ) {
@@ -404,6 +484,7 @@ function pruneRedundantShortRingStrokes(
             withoutStroke,
             config,
         );
+        // If the ring is still "good enough" and closed without this stroke, remove it.
         if (
             withoutCoverage.coverageRatio >=
                 TOPOLOGY_RING_PRUNE_COVERAGE_FLOOR &&
@@ -416,6 +497,9 @@ function pruneRedundantShortRingStrokes(
     return kept;
 }
 
+/**
+ * Identifies which strokes from a topological closure actually form the ring.
+ */
 function collectTopologicalRingStrokes(
     strokes: Stroke[],
     topology: TopologicalClosureResult,
@@ -431,6 +515,7 @@ function collectTopologicalRingStrokes(
     };
     const ringStrokes = edgeStrokes.filter((stroke) => {
         const metrics = strokeCircleMetrics(stroke, refinedCircle, config);
+        // A stroke is considered part of the ring if it's long enough and mostly follows the perimeter.
         return (
             metrics.nearLength >=
                 TOPOLOGY_RING_STROKE_MIN_NEAR_CIRCLE_LENGTH_PX &&
@@ -443,6 +528,10 @@ function collectTopologicalRingStrokes(
         : edgeStrokes;
 }
 
+/**
+ * Filters the input strokes to only those that are physically close to a reference ring.
+ * This helps the topological analysis focus on the intended circle area.
+ */
 function closureRelevantStrokes(
     strokes: Stroke[],
     referenceRing: RingCandidate | null,
@@ -467,10 +556,15 @@ function closureRelevantStrokes(
                     distance(point, referenceRing.center) <= boundaryRadius,
             ).length / pointCount;
 
+        // Keep strokes that are mostly inside or on the boundary of the reference ring.
         return insideOrBoundaryRatio >= MIN_CLOSURE_RELEVANT_POINT_RATIO;
     });
 }
 
+/**
+ * Assigns a numeric score to a ring candidate based on its geometric quality.
+ * Higher scores mean the ring is "better" (rounder, smoother, more complete).
+ */
 function scoreCandidate(ring: RingCandidate | null, config: AppConfig): number {
     if (!ring || ring.radius < config.ring.minRadius) {
         return 0;
@@ -488,6 +582,9 @@ function scoreCandidate(ring: RingCandidate | null, config: AppConfig): number {
     );
 }
 
+/**
+ * Tries to find a closed-loop ring in the given strokes.
+ */
 function addTopologicalCandidate(
     candidates: RingCandidate[],
     strokes: Stroke[],
@@ -520,6 +617,9 @@ function addTopologicalCandidate(
     return topology;
 }
 
+/**
+ * Generates open (partial) ring candidates by looking for long, arc-like strokes.
+ */
 function buildOpenRingCandidates(
     strokes: CleanedStroke[],
     config: AppConfig,
@@ -529,6 +629,7 @@ function buildOpenRingCandidates(
         const length = stroke.metrics?.length ?? strokeLength(stroke);
         const bounds = stroke.metrics?.bounds ?? boundsForStrokes([stroke]);
         const diagonal = Math.hypot(bounds.width, bounds.height);
+        // Seeds must be long enough and have a wide enough bounding box to be a circle segment.
         return (
             length >= MIN_SEED_LENGTH_PX &&
             diagonal >= config.ring.minRadius * 1.35
@@ -540,6 +641,7 @@ function buildOpenRingCandidates(
         if (!firstPass) {
             continue;
         }
+        // Once we have a seed, we try to find all other strokes that follow the same path.
         const ringStrokes = collectOpenRingStrokes(firstPass, strokes, config);
         const measured = measureRing(ringStrokes, config, firstPass);
         if (measured) {
@@ -560,6 +662,9 @@ function buildOpenRingCandidates(
     return candidates;
 }
 
+/**
+ * Refines ring detection by focusing topological analysis near a known reference ring.
+ */
 function addReferenceFilteredClosureCandidate(
     candidates: RingCandidate[],
     strokes: Stroke[],
@@ -583,6 +688,7 @@ function addReferenceFilteredClosureCandidate(
     return candidates.length > previousCandidateCount;
 }
 
+/** Returns the best scoring ring that is not yet fully closed. */
 function bestOpenRingCandidate(
     openCandidates: RingCandidate[],
 ): RingCandidate | null {
@@ -598,6 +704,7 @@ function bestOpenRingCandidate(
     );
 }
 
+/** Selects a ring to use as a spatial reference for further analysis. */
 function closureReferenceRing(
     previousRing: RingCandidate | null,
     openCandidates: RingCandidate[],
@@ -608,6 +715,7 @@ function closureReferenceRing(
     return bestOpenRingCandidate(openCandidates);
 }
 
+/** Checks if two ring candidates represent the same physical drawing. */
 function isSamePhysicalRing(a: RingCandidate, b: RingCandidate): boolean {
     const averageRadius = Math.max(1, (a.radius + b.radius) / 2);
     const centerDistance = distance(a.center, b.center);
@@ -618,6 +726,7 @@ function isSamePhysicalRing(a: RingCandidate, b: RingCandidate): boolean {
     );
 }
 
+/** Filters a list of candidates down to unique physical rings. */
 function distinctRingCandidates(candidates: RingCandidate[]): RingCandidate[] {
     const distinct: RingCandidate[] = [];
     for (const candidate of candidates) {
@@ -632,6 +741,7 @@ function distinctRingCandidates(candidates: RingCandidate[]): RingCandidate[] {
     return distinct;
 }
 
+/** Creates a simplified version of a ring candidate for diagnostic purposes. */
 function summarizeUnsupportedRing(candidate: RingCandidate) {
     return {
         center: candidate.center,
@@ -642,6 +752,16 @@ function summarizeUnsupportedRing(candidate: RingCandidate) {
     };
 }
 
+/**
+ * Main entry point for ring detection.
+ * It identifies the primary spell circle from a set of hand-drawn strokes.
+ * It handles partial circles (still drawing) and fully closed loops (finished).
+ *
+ * @param strokes - The cleaned user strokes.
+ * @param previousRing - The ring detected in the previous frame, if any.
+ * @param config - Application configuration.
+ * @returns The best ring candidate found.
+ */
 export function detectRing(
     strokes: CleanedStroke[],
     previousRing: RingCandidate | null,
@@ -649,8 +769,10 @@ export function detectRing(
 ): RingCandidate {
     const candidates: RingCandidate[] = [];
 
+    // 1. Find candidates that look like partial arcs (open rings).
     const openCandidates = buildOpenRingCandidates(strokes, config);
 
+    // 2. Use the best open ring as a hint to find a closed loop (topological closure).
     const reference = closureReferenceRing(previousRing, openCandidates);
     const filteredClosureFound = addReferenceFilteredClosureCandidate(
         candidates,
@@ -659,6 +781,7 @@ export function detectRing(
         config,
     );
     if (!filteredClosureFound) {
+        // Fallback: try topological closure on all strokes.
         addTopologicalCandidate(candidates, strokes, config);
     }
     candidates.push(...openCandidates);
@@ -680,6 +803,7 @@ export function detectRing(
         };
     }
 
+    // Sort candidates: favor closed loops, then higher quality scores.
     candidates.sort(
         (a, b) =>
             Number(b.complete) - Number(a.complete) ||
@@ -689,6 +813,8 @@ export function detectRing(
     );
     const distinctRings = distinctRingCandidates(candidates);
     const ring = distinctRings[0];
+
+    // Detect and report nested rings or multiple rings which are currently unsupported by the compiler.
     const unsupportedMultipleRings = distinctRings
         .slice(1)
         .map(summarizeUnsupportedRing);
@@ -702,6 +828,7 @@ export function detectRing(
         )
         .map(summarizeUnsupportedRing);
 
+    // An "activation event" occurs exactly when a partial ring is completed for the first time.
     const activationEvent = Boolean(
         previousRing?.found &&
         !previousRing.complete &&

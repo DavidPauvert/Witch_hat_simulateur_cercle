@@ -1,21 +1,16 @@
-import { randomBetween, clamp } from '../../utils/geometry';
+import { randomBetween } from '../../utils/geometry';
 import {
     activePortalPlane,
     convergenceFlow,
-    convergePoint,
     effectFocus,
     effectGravity,
     effectOpacity,
     effectScale,
     effectSuspension,
-    particleAlpha,
-    particleDepth,
     portalOutDirection,
     pruneParticles,
-    randomPortalPoint,
     scaledParticleCount,
     spellLifetimeFrames,
-    steadyParticleAlpha,
     EffectState,
     Portal,
     ConvergenceFlow,
@@ -39,6 +34,12 @@ interface FireFlow {
     suspendedDamping: number;
 }
 
+/**
+ * Configures the physics parameters for the fire effect based on the spell's properties.
+ * It handles two modes: 'suspended' (floating in place) and 'flowing' (shooting out).
+ *
+ * @returns A configuration object for the fire particle simulation.
+ */
 function fireFlowConfig(
     spellIR: SpellIR,
     ring: RingCandidate,
@@ -51,6 +52,8 @@ function fireFlowConfig(
     const focus = effectFocus(spellIR);
     const gravity = effectGravity(spellIR);
     const suspension = effectSuspension(spellIR);
+
+    // If the spell has low gravity, fire particles enter 'suspended' mode.
     const suspended = suspension >= 0.55;
     const convergence = convergenceFlow(spellIR, portal, frame);
 
@@ -62,8 +65,10 @@ function fireFlowConfig(
         side,
         convergence,
         suspendedLife: spellLifetimeFrames(spellIR),
+        // Height above the parchment where suspended fire hovers.
         suspendedHeight:
             ring.radius * (0.34 + spellIR.force * 0.18 + scale * 0.08),
+        // Hover area dimensions.
         suspendedRadiusX:
             ring.radius *
             (0.16 + spellIR.spread * 0.16 + scale * 0.04) *
@@ -74,17 +79,24 @@ function fireFlowConfig(
             (0.11 + spellIR.spread * 0.12 + scale * 0.028) *
             (1 - convergence.strength * 0.48) *
             (1 - focus * 0.28),
+        // Intensity of the "bobbing" animation.
         suspendedBob: ring.radius * (0.008 + (1 - spellIR.stability) * 0.014),
+        // Horizontal wandering intensity.
         suspendedWander:
             ring.radius *
             (0.012 + spellIR.spread * 0.03) *
             (1 - convergence.strength * 0.46) *
             (1 - focus * 0.44),
+        // Physics constants for the hover behavior.
         suspendedTension: 0.014 + spellIR.stability * 0.018,
         suspendedDamping: 0.954 + spellIR.stability * 0.03,
     };
 }
 
+/**
+ * Spawns a fire particle that hovers in a designated "home" position.
+ * This is used for stable or prepared fire spells.
+ */
 function spawnSuspendedFireParticle(
     spellIR: SpellIR,
     ring: RingCandidate,
@@ -96,14 +108,18 @@ function spawnSuspendedFireParticle(
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.sqrt(Math.random());
     const phase = randomBetween(0, Math.PI * 2);
-    
+
     // Position in paper space (Z is up)
-    const homeX = ring.center.x + Math.cos(angle) * flow.suspendedRadiusX * radius;
-    const homeY = ring.center.y + Math.sin(angle) * flow.suspendedRadiusY * radius;
+    const homeX =
+        ring.center.x + Math.cos(angle) * flow.suspendedRadiusX * radius;
+    const homeY =
+        ring.center.y + Math.sin(angle) * flow.suspendedRadiusY * radius;
     const homeZ = flow.suspendedHeight;
-    
+
     const startJitter = ring.radius * 0.025;
-    const flicker = Math.sin(frame * 0.11 + phase) * (1 - spellIR.stability) * 0.42;
+    // Flicker adds high-frequency noise to the motion.
+    const flicker =
+        Math.sin(frame * 0.11 + phase) * (1 - spellIR.stability) * 0.42;
 
     return {
         x: homeX + randomBetween(-startJitter, startJitter),
@@ -125,6 +141,10 @@ function spawnSuspendedFireParticle(
     };
 }
 
+/**
+ * Spawns a fire particle that shoots outward in the spell's direction.
+ * This is used for active, high-force spells.
+ */
 function spawnFlowFireParticle(
     spellIR: SpellIR,
     ring: RingCandidate,
@@ -134,22 +154,24 @@ function spawnFlowFireParticle(
     const scale = effectScale(spellIR);
     const focus = effectFocus(spellIR);
     const convergence = flow.convergence;
-    
-    // Spawn on the paper surface
+
+    // Spawn randomly on the paper surface within the circle.
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.sqrt(Math.random());
-    const sourceX = ring.center.x + Math.cos(angle) * ring.radius * 0.4 * radius;
-    const sourceY = ring.center.y + Math.sin(angle) * ring.radius * 0.4 * radius;
-    
+    const sourceX =
+        ring.center.x + Math.cos(angle) * ring.radius * 0.4 * radius;
+    const sourceY =
+        ring.center.y + Math.sin(angle) * ring.radius * 0.4 * radius;
+
+    // Initial velocity determined by spell force.
     const speed =
-        randomBetween(1.8, 4.2) *
-        (0.5 + spellIR.force) *
-        (0.92 + scale * 0.12);
-    
+        randomBetween(1.8, 4.2) * (0.5 + spellIR.force) * (0.92 + scale * 0.12);
+
     const dirX = spellIR.direction?.x ?? 0;
     const dirY = spellIR.direction?.y ?? 0;
     const dirZ = spellIR.direction?.z ?? 1;
 
+    // Stability determines how much random "spray" there is.
     const jitter = (1 - spellIR.stability) * 0.5;
 
     return {
@@ -169,6 +191,7 @@ function spawnFlowFireParticle(
     };
 }
 
+/** Selects the appropriate spawn logic for a fire particle. */
 function spawnFireParticle(
     spellIR: SpellIR,
     ring: RingCandidate,
@@ -181,6 +204,14 @@ function spawnFireParticle(
         : spawnFlowFireParticle(spellIR, ring, portal, flow);
 }
 
+/**
+ * Updates fire particles in suspended (hovering) mode.
+ *
+ * Complex: Spring-based hovering.
+ * Particles are attached to a "home" coordinate by virtual springs (tension).
+ * They wander and bob around that home point using sine waves, creating
+ * a smooth, magical floating effect.
+ */
 function updateSuspendedFireParticle(
     particle: any,
     flow: FireFlow,
@@ -188,6 +219,7 @@ function updateSuspendedFireParticle(
 ) {
     particle.age += dt;
 
+    // Calculate the target position with rhythmic wandering and bobbing.
     const targetX =
         particle.homeX +
         Math.sin(particle.phase + particle.age * 0.038) * flow.suspendedWander;
@@ -195,35 +227,44 @@ function updateSuspendedFireParticle(
         particle.homeY +
         Math.sin(particle.phase * 1.7 + particle.age * 0.048) *
             flow.suspendedWander;
-    const targetZ = 
-        particle.homeZ + 
-        Math.sin(particle.phase * 2.1 + particle.age * 0.052) * flow.suspendedBob;
+    const targetZ =
+        particle.homeZ +
+        Math.sin(particle.phase * 2.1 + particle.age * 0.052) *
+            flow.suspendedBob;
 
+    // Apply spring force towards the target position.
     particle.vx += (targetX - particle.x) * flow.suspendedTension * dt;
     particle.vy += (targetY - particle.y) * flow.suspendedTension * dt;
     particle.vz += (targetZ - particle.z) * flow.suspendedTension * dt;
-    
+
+    // Integrate velocity into position.
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
     particle.z += particle.vz * dt;
-    
+
+    // Apply damping (friction) to prevent the springs from oscillating infinitely.
     particle.vx *= flow.suspendedDamping;
     particle.vy *= flow.suspendedDamping;
     particle.vz *= flow.suspendedDamping;
 }
 
+/** Updates fire particles in flow (shooting) mode using simple ballistic motion. */
 function updateFlowFireParticle(particle: any, flow: FireFlow, dt: number) {
     particle.age += dt;
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
     particle.z += particle.vz * dt;
-    
-    // Simple gravity/drag
+
+    // Slow down over time (air resistance).
     particle.vx *= 0.98;
     particle.vy *= 0.98;
     particle.vz *= 0.98;
 }
 
+/**
+ * Converts internal fire simulation state into WebGL particle data.
+ * Fire uses a color gradient from bright yellow (new/hot) to dark red (old/cool).
+ */
 function queueFireParticle(
     state: EffectState,
     particle: any,
@@ -231,13 +272,12 @@ function queueFireParticle(
     spellIR: SpellIR,
     opacity: number,
 ) {
-    const alpha = (1.0 - particle.age / particle.life) * opacity;
+    const alpha = (1 - particle.age / particle.life) * opacity;
     if (alpha <= 0) return;
 
-    // Fire colors: yellow core to red outer
-    // r, g, b, a
-    const r = 1.0;
-    const g = 0.4 + alpha * 0.5;
+    // Fire colors: yellow core to red outer.
+    const r = 1;
+    const g = 0.4 + alpha * 0.5; // Greener when hot (high alpha).
     const b = 0.1 + alpha * 0.2;
 
     state.webglParticles.push({
@@ -245,10 +285,17 @@ function queueFireParticle(
         y: particle.y,
         z: particle.z,
         radius: particle.radius * (0.8 + alpha * 0.4),
-        r, g, b, a: alpha * 0.8
+        r,
+        g,
+        b,
+        a: alpha * 0.8,
     });
 }
 
+/**
+ * Main entry point for the Fire elemental effect.
+ * It manages the lifecycle and animation of fire particles within the spell.
+ */
 export function drawFireEffect(
     ctx: CanvasRenderingContext2D,
     state: EffectState,
@@ -262,19 +309,22 @@ export function drawFireEffect(
     const portal = activePortalPlane(ctx.canvas, ring);
     state.fireFrame = (state.fireFrame ?? 0) + dt;
     const flow = fireFlowConfig(spellIR, ring, portal, state.fireFrame);
-    
+
+    // Determine how many particles to emit based on spell prepare intensity.
     const targetCount = scaledParticleCount(
         config.renderer.particleBaseCount * (0.78 + scale * 0.32),
         spellIR,
         config,
     );
-    
+
+    // Spawn new particles until the target count is reached.
     while (state.particles.length < targetCount) {
         state.particles.push(
             spawnFireParticle(spellIR, ring, portal, flow, state.fireFrame),
         );
     }
 
+    // Update and render each active particle.
     for (const particle of state.particles) {
         if (flow.suspended) {
             updateSuspendedFireParticle(particle, flow, dt);
@@ -284,5 +334,6 @@ export function drawFireEffect(
         queueFireParticle(state, particle, flow, spellIR, opacity);
     }
 
+    // Remove particles that have died.
     pruneParticles(state);
 }

@@ -11,6 +11,10 @@ export interface DrawingCaptureCallbacks {
     onCommit?: (points: EventPoint[]) => void;
 }
 
+/**
+ * Handles raw pointer input from the user and transforms it into ink strokes.
+ * It manages the lifecycle of a drawing interaction: start, move (sampling), and commit.
+ */
 export class DrawingCapture {
     canvas: HTMLCanvasElement;
     config: AppConfig;
@@ -20,6 +24,9 @@ export class DrawingCapture {
     enabled: boolean;
     locked: boolean;
 
+    /**
+     * Initializes the capture system for a specific canvas element.
+     */
     constructor(
         canvas: HTMLCanvasElement,
         config: AppConfig,
@@ -38,6 +45,7 @@ export class DrawingCapture {
         this.handlePointerUp = this.handlePointerUp.bind(this);
     }
 
+    /** Toggles whether drawing input is currently accepted. */
     setLocked(locked: boolean) {
         this.locked = locked;
         if (locked) {
@@ -45,6 +53,7 @@ export class DrawingCapture {
         }
     }
 
+    /** Attaches pointer event listeners to the canvas to begin capturing drawing input. */
     enable() {
         if (this.enabled) {
             return;
@@ -56,6 +65,7 @@ export class DrawingCapture {
         this.enabled = true;
     }
 
+    /** Removes pointer event listeners from the canvas. */
     disable() {
         this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
         this.canvas.removeEventListener('pointermove', this.handlePointerMove);
@@ -64,6 +74,7 @@ export class DrawingCapture {
         this.enabled = false;
     }
 
+    /** Returns the stroke data for the line currently being drawn. */
     getCurrentStroke(): Stroke | null {
         if (this.currentPoints.length === 0) {
             return null;
@@ -74,26 +85,31 @@ export class DrawingCapture {
         };
     }
 
+    /** Resets the temporary points and pointer state. */
     clearPreview() {
         this.currentPoints = [];
         this.pointerId = null;
     }
 
+    /** Handler for the start of a drawing interaction. */
     handlePointerDown(event: PointerEvent) {
         if (this.locked) {
             event.preventDefault();
             return;
         }
+        // Only accept primary button (usually left-click or stylus tip).
         if (event.button !== undefined && event.button !== 0) {
             return;
         }
         event.preventDefault();
         this.pointerId = event.pointerId;
+        // Pointer capture ensures move events are sent even if the pointer leaves the canvas.
         this.canvas.setPointerCapture?.(event.pointerId);
         this.currentPoints = [canvasPointFromEvent(event, this.canvas)];
         this.callbacks.onPreview?.(this.getCurrentStroke());
     }
 
+    /** Handler for pointer movement during a drawing interaction. */
     handlePointerMove(event: PointerEvent) {
         if (this.locked) {
             event.preventDefault();
@@ -104,6 +120,10 @@ export class DrawingCapture {
         }
         event.preventDefault();
         const point = canvasPointFromEvent(event, this.canvas);
+
+        // Complex: Input Sampling.
+        // To reduce data noise and improve performance, we only keep points that are
+        // at least `minPointDistance` away from the previous point.
         if (
             shouldKeepPoint(
                 this.currentPoints,
@@ -116,6 +136,7 @@ export class DrawingCapture {
         }
     }
 
+    /** Handler for the end of a drawing interaction. */
     handlePointerUp(event: PointerEvent) {
         if (this.locked) {
             event.preventDefault();
@@ -131,6 +152,9 @@ export class DrawingCapture {
         const points = this.currentPoints;
         this.clearPreview();
 
+        // Complex: Stroke Commitment.
+        // We only "commit" the stroke to the permanent list if it passes
+        // minimum length and point-count checks. This filters out tiny accidental clicks or "taps".
         if (
             points.length >= 2 &&
             pathLength(points) >= this.config.input.minStrokeLength

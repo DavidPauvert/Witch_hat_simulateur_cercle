@@ -4,7 +4,6 @@ import {
     RingCandidate,
     AppConfig,
     RecognitionResult,
-    Bounds,
 } from '../types';
 
 interface GlowLayer {
@@ -37,10 +36,17 @@ const GLOW_LAYERS: GlowLayer[] = [
     },
 ];
 
+/**
+ * Standard ink rendering configuration.
+ */
 function hasStrokePoints(stroke: Stroke | null): stroke is Stroke {
     return Boolean(stroke?.points?.length);
 }
 
+/**
+ * Traces the geometry of a stroke into the provided 2D canvas context.
+ * This function only defines the path; it does not call stroke() or fill().
+ */
 function traceStrokePath(ctx: CanvasRenderingContext2D, stroke: Stroke) {
     const firstPoint = stroke.points[0];
     ctx.beginPath();
@@ -51,6 +57,9 @@ function traceStrokePath(ctx: CanvasRenderingContext2D, stroke: Stroke) {
     }
 }
 
+/**
+ * Renders a single hand-drawn stroke as a basic ink line.
+ */
 function drawSingleStroke(
     ctx: CanvasRenderingContext2D,
     stroke: Stroke,
@@ -71,6 +80,10 @@ function drawSingleStroke(
     ctx.restore();
 }
 
+/**
+ * Calculates a point on the stroke that is suitable for placing a label.
+ * It finds the geometric midpoint along the path's length.
+ */
 function strokeLabelAnchor(stroke: Stroke): Point | null {
     if (!hasStrokePoints(stroke)) {
         return null;
@@ -79,6 +92,7 @@ function strokeLabelAnchor(stroke: Stroke): Point | null {
         return stroke.points[0];
     }
 
+    // First pass: calculate total path length.
     let totalLength = 0;
     for (let index = 1; index < stroke.points.length; index += 1) {
         const previous = stroke.points[index - 1];
@@ -89,6 +103,7 @@ function strokeLabelAnchor(stroke: Stroke): Point | null {
         );
     }
 
+    // Second pass: walk half that length to find the midpoint.
     const targetLength = totalLength / 2;
     let walkedLength = 0;
     for (let index = 1; index < stroke.points.length; index += 1) {
@@ -114,6 +129,7 @@ function strokeLabelAnchor(stroke: Stroke): Point | null {
     return stroke.points[stroke.points.length - 1];
 }
 
+/** Ensures that a text label doesn't spill off the edge of the canvas. */
 function clampLabelPosition(
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -127,6 +143,9 @@ function clampLabelPosition(
     };
 }
 
+/**
+ * Renders one layer of a complex multi-layered glow effect.
+ */
 function drawGlowingStrokeLayer(
     ctx: CanvasRenderingContext2D,
     stroke: Stroke,
@@ -134,6 +153,7 @@ function drawGlowingStrokeLayer(
     layer: GlowLayer,
 ) {
     ctx.save();
+    // 'lighter' composite mode makes overlapping glows look more intense.
     ctx.globalCompositeOperation = 'lighter';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -146,6 +166,10 @@ function drawGlowingStrokeLayer(
     ctx.restore();
 }
 
+/**
+ * Renders a stroke with an animated glow effect (pulse and flicker).
+ * Used when a spell is successfully completed.
+ */
 function drawSingleGlowingStroke(
     ctx: CanvasRenderingContext2D,
     stroke: Stroke,
@@ -156,6 +180,9 @@ function drawSingleGlowingStroke(
         return;
     }
 
+    // Complex: Animation parameters.
+    // 'pulse' creates a rhythmic sine wave.
+    // 'flicker' adds a bit of randomized high-frequency noise for a "magical" feel.
     const glow = {
         pulse: 0.5 + Math.sin(timestamp * 0.004) * 0.5,
         flicker: Math.random() * 0.08,
@@ -167,12 +194,16 @@ function drawSingleGlowingStroke(
     }
 }
 
+/**
+ * Standard entry point for drawing user ink.
+ */
 export function drawStrokes(
     ctx: CanvasRenderingContext2D,
     strokes: Stroke[],
     currentStroke: Stroke | null,
     config: AppConfig,
 ) {
+    // 1. Draw finished strokes.
     for (const stroke of strokes) {
         drawSingleStroke(ctx, stroke, {
             color: config.renderer.inkColor,
@@ -181,6 +212,7 @@ export function drawStrokes(
         });
     }
 
+    // 2. Draw the stroke currently being drawn by the user (with slightly lower alpha).
     if (currentStroke) {
         drawSingleStroke(ctx, currentStroke, {
             color: config.renderer.inkColor,
@@ -190,6 +222,7 @@ export function drawStrokes(
     }
 }
 
+/** Filters a list of strokes to only those that were part of the activation event. */
 function activeGlowStrokes(
     activatedStrokeIds: Set<string>,
     strokes: Stroke[],
@@ -205,6 +238,7 @@ function activeGlowStrokes(
     return glowingStrokes;
 }
 
+/** Calculates the fading transparency of the activation glow over time. */
 function glowAlphaAt(
     timestamp: number,
     activatedAt: number,
@@ -212,9 +246,14 @@ function glowAlphaAt(
 ): number {
     const elapsed = timestamp - activatedAt;
     const t = Math.min(1, elapsed / duration);
+    // Quadratic ease-out for a smoother fade.
     return Math.pow(1 - t, 2);
 }
 
+/**
+ * Main entrance for the activation animation.
+ * It renders a fading, pulsating glow over the strokes that form the successful spell.
+ */
 export function drawGlowingStrokes(
     ctx: CanvasRenderingContext2D,
     activatedAt: number,
@@ -237,6 +276,10 @@ export function drawGlowingStrokes(
     }
 }
 
+/**
+ * Draws debugging information for the detected ring (spell circle).
+ * Green dashed line for incomplete rings, solid red for completed ones.
+ */
 export function drawRingDebug(
     ctx: CanvasRenderingContext2D,
     ring: RingCandidate,
@@ -255,6 +298,7 @@ export function drawRingDebug(
     ctx.arc(ring.center.x, ring.center.y, ring.radius, 0, Math.PI * 2);
     ctx.stroke();
 
+    // Draw the center of gravity of the ring.
     ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(36, 27, 22, 0.62)';
     ctx.beginPath();
@@ -263,6 +307,10 @@ export function drawRingDebug(
     ctx.restore();
 }
 
+/**
+ * Renders ID labels over every drawn stroke.
+ * This is extremely useful for identifying which physical ink corresponds to which parser ID.
+ */
 export function drawStrokeIdDebug(
     ctx: CanvasRenderingContext2D,
     strokes: Stroke[],
@@ -291,6 +339,7 @@ export function drawStrokeIdDebug(
             boxHeight,
         );
 
+        // Draw a small rounded background box for the label.
         ctx.fillStyle = 'rgba(255, 251, 233, 0.88)';
         ctx.strokeStyle = 'rgba(36, 27, 22, 0.34)';
         ctx.beginPath();
@@ -321,6 +370,10 @@ export function drawStrokeIdDebug(
     ctx.restore();
 }
 
+/**
+ * Draws diagnostic bounding boxes and recognition scores for identified symbols.
+ * Green boxes for recognized symbols, red boxes for unknown or ambiguous ones.
+ */
 export function drawCandidateDebug(
     ctx: CanvasRenderingContext2D,
     candidates: any[],
@@ -344,15 +397,18 @@ export function drawCandidateDebug(
         ctx.fillStyle = accepted
             ? 'rgba(31, 111, 115, 0.92)'
             : 'rgba(184, 69, 49, 0.92)';
+
         ctx.strokeRect(
             candidate.bounds.minX,
             candidate.bounds.minY,
             candidate.bounds.width,
             candidate.bounds.height,
         );
+
         const label = accepted
             ? `${recognition.id} ${Math.round(recognition.confidence * 100)}`
             : `${candidate.candidateId}`;
+
         ctx.fillText(
             label,
             candidate.bounds.minX,

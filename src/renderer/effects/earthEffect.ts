@@ -19,17 +19,17 @@ export function drawEarthEffect(
     const scale = effectScale(spellIR);
     const opacity = effectOpacity(spellIR);
     state.earthFrame = (state.earthFrame ?? 0) + dt;
-    
+
     const targetCount = scaledParticleCount(
         (68 + spellIR.force * 78) * (0.82 + scale * 0.28),
         spellIR,
         config,
     );
-    
+
     while (state.particles.length < targetCount) {
         const angle = Math.random() * Math.PI * 2;
         const radius = Math.sqrt(Math.random()) * ring.radius * 0.35;
-        const speed = (1.5 + spellIR.force * 2.5);
+        const speed = 1.5 + spellIR.force * 2.5;
         const dirX = spellIR.direction?.x ?? 0;
         const dirY = spellIR.direction?.y ?? 0;
         const dirZ = spellIR.direction?.z ?? 1;
@@ -52,7 +52,7 @@ export function drawEarthEffect(
         particle.x += particle.vx * dt;
         particle.y += particle.vy * dt;
         particle.z += particle.vz * dt;
-        
+
         // Earth drag/gravity
         particle.vz -= 0.05 * dt;
         particle.vx *= 0.98;
@@ -66,7 +66,7 @@ export function drawEarthEffect(
             particle.vz = 0;
         }
 
-        const alpha = (1.0 - particle.age / particle.life) * opacity;
+        const alpha = (1 - particle.age / particle.life) * opacity;
         if (alpha > 0) {
             state.webglParticles.push({
                 x: particle.x,
@@ -76,7 +76,7 @@ export function drawEarthEffect(
                 r: 0.4,
                 g: 0.3,
                 b: 0.15,
-                a: alpha * 0.9
+                a: alpha * 0.9,
             });
         }
     }

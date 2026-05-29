@@ -42,6 +42,14 @@ interface CandidateFeatures {
     strokeProfile: number[];
 }
 
+/**
+ * Calculates a score based on whether a symbol is allowed to appear in its current layer.
+ * Some symbols (like sigils) might be restricted to specific parts of the spell ring.
+ *
+ * @param entry - The dictionary entry for the symbol.
+ * @param candidate - The hand-drawn candidate being evaluated.
+ * @returns A score from 0 to 1 indicating layer compatibility.
+ */
 function allowedLayerScore(
     entry: SymbolEntry,
     candidate: SymbolCandidate,
@@ -50,17 +58,21 @@ function allowedLayerScore(
         return 1;
     }
     if (!entry.allowedLayers?.length) {
+        // If no restrictions are defined, we give a slight penalty for unknown intent,
+        // but generally allow it.
         return 0.75;
     }
     if (entry.allowedLayers.includes(candidate.layer)) {
         return 1;
     }
+    // "Near boundary" means the symbol is sitting between two layers; we're more lenient here.
     if (candidate.nearBoundary) {
         return 0.72;
     }
     return 0.34;
 }
 
+/** Normalizes a value to a 0-1 score based on how well it fits within a preferred min/max range. */
 function rangeScore(value: number, min: number, max: number): number {
     if (value < min) {
         return clamp(value / Math.max(0.001, min));
@@ -71,6 +83,7 @@ function rangeScore(value: number, min: number, max: number): number {
     return 1;
 }
 
+/** Retrieves configuration thresholds for symbol recognition. */
 function recognitionThresholds(config: AppConfig) {
     const recognition = config.recognition ?? {};
     return {
@@ -79,17 +92,31 @@ function recognitionThresholds(config: AppConfig) {
     };
 }
 
+/** Calculates the width-to-height aspect ratio. */
 function aspectRatio(width: number, height: number): number {
     return Math.max(0.001, width) / Math.max(0.001, height);
 }
 
+/**
+ * Calculates the effective aspect ratio of a shape if it were rotated.
+ * This is used to compare hand-drawn symbols to templates regardless of orientation.
+ */
 function rotatedAspectRatio(ratio: number, rotationDeg: number): number {
     const normalized = Math.abs((normalizeAngleDeg(rotationDeg) % 180) - 90);
+    // As we rotate, the width and height effectively "blend" into each other.
     const blend = 1 - normalized / 90;
     const logRatio = Math.log(Math.max(0.001, ratio));
     return Math.exp(logRatio * (1 - blend * 2));
 }
 
+/**
+ * Compares the aspect ratio of a candidate to a template, accounting for rotation.
+ *
+ * @param candidateRatio - Aspect ratio of the drawn symbol.
+ * @param templateRatio - Aspect ratio of the dictionary template.
+ * @param rotationDeg - The rotation applied during matching.
+ * @returns A compatibility score from 0 to 1.
+ */
 function aspectCompatibility(
     candidateRatio: number,
     templateRatio: number,
@@ -99,17 +126,24 @@ function aspectCompatibility(
         candidateRatio,
         rotationDeg,
     );
+    // Use logarithmic distance for a more natural comparison of ratios.
     const distance = Math.abs(
         Math.log(adjustedCandidateRatio / Math.max(0.001, templateRatio)),
     );
     return clamp(1 - distance / 1.1);
 }
 
+/** Calculates the smallest angle between two orientations, ignoring direction (modulo 180). */
 function undirectedAngularDifference(a: number, b: number): number {
     const difference = angularDifference(a, b);
     return Math.min(difference, Math.abs(180 - difference));
 }
 
+/**
+ * Generates a "profile" of stroke lengths for a symbol.
+ * The profile is an array of relative lengths (e.g. [0.6, 0.4] for two strokes).
+ * This helps distinguish symbols by their internal complexity.
+ */
 function strokeLengthProfile(
     strokes: any[],
     pointGetter: (s: any) => Point[],
@@ -125,6 +159,7 @@ function strokeLengthProfile(
     return lengths.map((length) => length / total);
 }
 
+/** Compares two stroke length profiles by calculating the Manhattan distance between them. */
 function profileCompatibility(
     candidateProfile: number[],
     templateProfile: number[],
@@ -143,6 +178,7 @@ function profileCompatibility(
     return clamp(1 - distance / 1.4);
 }
 
+/** Compares the number of strokes between a candidate and a template. */
 function strokeCountCompatibility(
     candidateCount: number,
     templateCount: number,
@@ -157,6 +193,9 @@ function strokeCountCompatibility(
     );
 }
 
+/**
+ * Extracts and caches geometric features of a dictionary template.
+ */
 function templateFeatures(strokeTemplate: any): TemplateFeatures {
     const cached = templateFeatureCache.get(strokeTemplate);
     if (cached) {
@@ -180,30 +219,39 @@ function templateFeatures(strokeTemplate: any): TemplateFeatures {
     return features;
 }
 
+/**
+ * Extracts geometric features of a hand-drawn symbol candidate.
+ */
 function candidateFeatures(candidate: SymbolCandidate): CandidateFeatures {
     const bounds = candidate.bounds;
     const width = Math.max(1, bounds.width);
     const height = Math.max(1, bounds.height);
     const elongation =
         Math.max(width, height) / Math.max(1, Math.min(width, height));
+
     const strokeProfiles = candidate.strokes
         .map((stroke) => {
             const length = strokeLength(stroke);
             return { length };
         })
         .sort((a, b) => b.length - a.length);
+
     const totalStrokeLength = strokeProfiles.reduce(
         (sum, stroke) => sum + stroke.length,
         0,
     );
+
     const dominantStroke = strokeProfiles[0] ?? { length: 0 };
     const secondaryStroke = strokeProfiles[1] ?? { length: 0 };
+
+    // Imbalance measures if one stroke is much longer than others.
     const strokeLengthImbalance =
         strokeProfiles.length > 1
-            ? (dominantStroke.length - secondaryStroke.length) /
-              Math.max(0.001, totalStrokeLength)
+            ? (dominantStroke.length - secondaryStroke.length) / Math.max(0.001, totalStrokeLength)
             : 0;
+
     const elongationNorm = clamp((elongation - 1) / 3);
+    // Axis dominance is a high-level feature combining shape stretch and stroke dominance.
     const axisDominance = clamp(
         strokeLengthImbalance * 1.35 + elongationNorm * 0.35,
     );
@@ -222,6 +270,10 @@ function candidateFeatures(candidate: SymbolCandidate): CandidateFeatures {
     };
 }
 
+/**
+ * Calculates a "structural" compatibility score that doesn't rely on pixel-by-pixel matching.
+ * It looks at high-level properties like aspect ratio, stroke count, and relative stroke lengths.
+ */
 function structuralCompatibility(
     kind: SymbolKind,
     entry: SymbolEntry,
@@ -235,10 +287,13 @@ function structuralCompatibility(
         template.aspectRatio,
         templateMatch.rotationDeg ?? 0,
     );
+
+    // Check if the bitmap matcher already found a very strong match.
     const overdrawCompatible =
         templateMatch.candidateExplainedRatio >= 0.9 &&
         templateMatch.templateCoveredRatio >= 0.82 &&
         templateMatch.unexplainedInkRatio <= 0.16;
+
     const rawCountScore = strokeCountCompatibility(
         features.strokeCount,
         template.strokeCount,
@@ -247,6 +302,8 @@ function structuralCompatibility(
         features.strokeProfile,
         template.strokeProfile,
     );
+
+    // Be more lenient on stroke counts/profiles if the overdraw looks correct (user might have "doubled back").
     const countScore =
         overdrawCompatible && features.strokeCount > template.strokeCount
             ? Math.max(rawCountScore, 0.86)
@@ -255,6 +312,7 @@ function structuralCompatibility(
         overdrawCompatible && features.strokeCount > template.strokeCount
             ? Math.max(rawProfileScore, 0.82)
             : rawProfileScore;
+
     const rotatedCandidateAxis = normalizeAngleDeg(
         candidate.orientationDeg + (templateMatch.rotationDeg ?? 0),
     );
@@ -266,11 +324,15 @@ function structuralCompatibility(
             ) /
                 90,
     );
+
     const smallSign =
         kind === 'sign' && template.strokeCount <= SIMPLE_SIGN_STROKE_LIMIT;
+
+    // Weighted sum of structural features: signs care more about stroke count, sigils more about aspect.
     const strokeStructureScore = smallSign
         ? countScore * 0.58 + profileScore * 0.42
         : countScore * 0.24 + profileScore * 0.76;
+
     const score =
         kind === 'sign'
             ? strokeStructureScore * 0.68 + aspectScore * 0.2 + axisScore * 0.12
@@ -289,19 +351,27 @@ function structuralCompatibility(
     };
 }
 
+/**
+ * Heuristic to detect if a match is "contaminated" by extra ink or drawn in the wrong place.
+ */
 function isContaminatedMatch(candidate: SymbolCandidate, best: any) {
     const templateMatch = best?.templateMatch;
     if (!templateMatch) {
         return false;
     }
 
+    // High Risk: Lots of ink that isn't part of the template.
     const highRiskExtraInk =
         templateMatch.contaminationRisk >= 0.62 &&
         templateMatch.unexplainedInkRatio >= 0.34;
+
+    // Risk: Symbol is much bigger than expected but the match is weak.
     const oversizedWeakMatch =
         candidate.sizeNorm >= 0.42 &&
         templateMatch.unexplainedInkRatio >= 0.26 &&
         best.confidence < 0.7;
+
+    // Risk: Ink is in regions the template says should be empty.
     const wrongRegionInk =
         templateMatch.forbiddenCellInkRatio >= 0.42 &&
         templateMatch.requiredCellCoverage <= 0.82 &&
@@ -310,6 +380,7 @@ function isContaminatedMatch(candidate: SymbolCandidate, best: any) {
     return highRiskExtraInk || oversizedWeakMatch || wrongRegionInk;
 }
 
+/** Heuristic to detect if a drawing is too "messy" (high overdraw or low geometric neatness). */
 function isMessyMatch(candidate: SymbolCandidate, best: any) {
     const templateMatch = best?.templateMatch;
     if (!templateMatch) {
@@ -324,6 +395,9 @@ function isMessyMatch(candidate: SymbolCandidate, best: any) {
     );
 }
 
+/**
+ * Final determination of recognition quality based on confidence and competitors.
+ */
 function recognitionStatus(
     candidate: SymbolCandidate,
     best: any,
@@ -338,6 +412,7 @@ function recognitionStatus(
     if (isContaminatedMatch(candidate, best)) {
         return 'contaminated';
     }
+    // Ambiguous: structural and confidence scores both disagree or are weak.
     if (best.structuralMatch?.score < 0.42 && best.confidence < 0.7) {
         return 'ambiguous';
     }
@@ -345,15 +420,19 @@ function recognitionStatus(
         return 'unknown';
     }
 
+    // Check if the runner-up is too close to the winner.
     const competitor = Math.max(
         second.confidence ?? 0,
         secondSameKind.confidence ?? 0,
     );
     const bestInk = best.templateMatch ?? {};
+
+    // If it's a "perfect" bitmap match, we ignore the gap threshold.
     const clearInkIdentity =
         bestInk.inkScore >= 0.92 &&
         bestInk.candidateExplainedRatio >= 0.98 &&
         bestInk.templateCoveredRatio >= 0.98;
+
     if (
         !clearInkIdentity &&
         best.confidence - competitor < thresholds.ambiguityGap
@@ -366,6 +445,10 @@ function recognitionStatus(
     return 'valid';
 }
 
+/**
+ * Calculates a complete similarity score between a candidate and a dictionary template.
+ * This is the core logic that balances visual similarity (bitmaps) and structural similarity (skeletons).
+ */
 function scoreByStrokeTemplate(
     kind: SymbolKind,
     entry: SymbolEntry,
@@ -383,16 +466,20 @@ function scoreByStrokeTemplate(
         };
     }
 
+    // The recognition plan determines things like "should we test all rotations?".
     const recognitionPlan = recognitionPlanForSymbol(kind, entry, candidate);
     const matchFeatures =
         kind === 'sign'
             ? candidateFeatures(recognitionPlan.candidate)
             : features;
+
+    // 1. Perform bitmap-based template matching (fuzzy pixels).
     const rawTemplateMatch = scoreStrokeTemplate(
         recognitionPlan.candidate,
         strokeTemplate,
         recognitionPlan.options,
     );
+
     const templateMatch = {
         ...rawTemplateMatch,
         rotationDeg: normalizeAngleDeg(
@@ -406,36 +493,51 @@ function scoreByStrokeTemplate(
                     0),
         ),
     };
+
+    // 2. Perform structural matching (ratios and counts).
     const structuralMatch = structuralCompatibility(
         kind,
         entry,
-        recognitionPlan.candidate as SymbolCandidate,
+        recognitionPlan.candidate,
         matchFeatures,
         rawTemplateMatch,
     );
+
+    // 3. Score overall quality: favor medium-sized symbols.
     const sizeScore = rangeScore(candidate.sizeNorm, 0.045, 0.46);
+
+    // Complex: Heuristic adjustments.
+    // Small signs (like dots or simple lines) need extra structural validation to prevent "accidental" matches.
     const simpleSignStructureMultiplier =
         kind === 'sign' &&
         structuralMatch.templateStrokeCount <= SIMPLE_SIGN_STROKE_LIMIT
             ? 0.42 + structuralMatch.strokeCountScore * 0.58
             : 1;
+
     const simpleSignIncompleteCap =
         kind === 'sign' &&
         structuralMatch.templateStrokeCount <= SIMPLE_SIGN_STROKE_LIMIT &&
         templateMatch.templateCoveredRatio < SIMPLE_SIGN_MIN_TEMPLATE_COVERAGE
             ? 0.44
             : 1;
+
+    // Gross structure mismatch: if the candidate "looks" nothing like the template, cap the score.
     const grossStructureMismatchCap =
         structuralMatch.score < 0.18 && templateMatch.templateCoveredRatio < 0.5
             ? 0.44
             : 1;
+
+    // Final weighted score aggregation.
     const contextualScore =
         templateMatch.confidence * 0.68 +
         structuralMatch.score * 0.13 +
         layerScore * 0.1 +
         sizeScore * 0.04 +
         candidate.neatness * 0.05;
+
+    // Cap how much "context" (like layer/neatness) can boost a weak visual match.
     const contextLiftCap = templateMatch.confidence + 0.035;
+
     return {
         confidence: Math.min(
             clamp(
@@ -450,6 +552,7 @@ function scoreByStrokeTemplate(
     };
 }
 
+/** Simplifies a SymbolCandidate for public API consumption. */
 function publicCandidate(candidate: SymbolCandidate) {
     return {
         candidateId: candidate.candidateId,
@@ -474,6 +577,15 @@ function publicCandidate(candidate: SymbolCandidate) {
     };
 }
 
+/**
+ * Main entry point for the recognition engine.
+ * It takes grouped stroke "candidates" and matches them against every entry in the dictionary.
+ *
+ * @param candidates - The hand-drawn groups to recognize.
+ * @param dictionary - The loaded sigil and sign dictionary.
+ * @param config - Application configuration.
+ * @returns A list of RecognitionResults identifying the best match for each candidate.
+ */
 export function recognizeCandidates(
     candidates: SymbolCandidate[],
     dictionary: Dictionary,
@@ -493,6 +605,8 @@ export function recognizeCandidates(
     return candidates.map((candidate) => {
         const thresholds = recognitionThresholds(config);
         const features = candidateFeatures(candidate);
+
+        // Score this candidate against EVERY entry in the dictionary.
         const scored = entries
             .map(({ kind, entry }) => ({
                 kind,
@@ -512,9 +626,12 @@ export function recognizeCandidates(
             entry: null,
             kind: null,
         };
+
         const acceptedByConfidence = Boolean(
             best && best.confidence >= thresholds.minConfidence,
         );
+
+        // Final quality check: handle ambiguity and contamination.
         const status = recognitionStatus(
             candidate,
             best,
@@ -523,11 +640,15 @@ export function recognizeCandidates(
             acceptedByConfidence,
             thresholds,
         );
+
         const accepted =
             acceptedByConfidence &&
             (status === 'valid' || status === 'valid_messy');
+
         const bestTemplateMatch = best?.templateMatch ?? null;
         const bestStructuralMatch = best?.structuralMatch ?? null;
+
+        // Collect top 3 matches for debugging/diagnostics.
         const topMatches = scored.slice(0, 3).map((score) => ({
             kind: score.kind,
             id: score.entry.id,
@@ -548,6 +669,7 @@ export function recognizeCandidates(
                 score.templateMatch?.rotationDeg ??
                 0,
         }));
+
         const bestGuess = best
             ? {
                   kind: best.kind,

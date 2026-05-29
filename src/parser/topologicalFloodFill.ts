@@ -55,6 +55,13 @@ export interface TopologicalClosureResult {
     };
 }
 
+/**
+ * Calculates the world-space center coordinates for a specific grid cell in the raster.
+ *
+ * @param index - The flat index of the cell in the raster grid.
+ * @param raster - The raster metadata.
+ * @returns A Point object with x and y coordinates.
+ */
 function cellCenter(index: number, raster: Raster): Point {
     const x = index % raster.width;
     const y = Math.floor(index / raster.width);
@@ -64,23 +71,35 @@ function cellCenter(index: number, raster: Raster): Point {
     };
 }
 
+/**
+ * Creates and initializes a Raster structure based on the bounding box of the strokes.
+ * It automatically adjusts the cell size (resolution) to stay within performance limits.
+ *
+ * @param strokes - The strokes to be rasterized.
+ * @param config - Application configuration for performance limits.
+ * @returns A new Raster object.
+ */
 function createRaster(strokes: Stroke[], config: AppConfig): Raster {
     const strokeRadius = STROKE_RADIUS_PX;
+    // Add padding to ensure the flood fill can completely surround the drawing.
     const padding = PADDING_PX + strokeRadius + 2;
     const sourceBounds = boundsForStrokes(strokes);
     const offsetX_raw = Math.floor(sourceBounds.minX - padding);
     const offsetY_raw = Math.floor(sourceBounds.minY - padding);
     const maxX_raw = Math.ceil(sourceBounds.maxX + padding);
     const maxY_raw = Math.ceil(sourceBounds.maxY + padding);
-    
+
     const rawWidth = Math.max(3, maxX_raw - offsetX_raw + 1);
     const rawHeight = Math.max(3, maxY_raw - offsetY_raw + 1);
-    
+
     let cellSize = CELL_SIZE_PX;
     const maxArea = config.limits.maxRasterArea;
 
+    // Complex: Adaptive Resolution Scaling.
+    // If the drawing is very large, a 1px grid would consume too much memory/CPU.
+    // We increase the cellSize (decreasing resolution) so the total number of cells
+    // stays within the `maxRasterArea` limit.
     if (rawWidth * rawHeight > maxArea) {
-        // Use a more aggressive target area to ensure we stay under the limit
         const targetArea = maxArea * 0.9;
         const scale = Math.sqrt(targetArea / (rawWidth * rawHeight));
         cellSize = CELL_SIZE_PX / scale;
@@ -107,10 +126,12 @@ function createRaster(strokes: Stroke[], config: AppConfig): Raster {
     };
 }
 
+/** Converts grid coordinates to a flat index. */
 function gridIndex(x: number, y: number, width: number): number {
     return y * width + x;
 }
 
+/** Marks a cell as "blocked" by ink and records which stroke passed through it. */
 function markBlockedCell(
     raster: Raster,
     x: number,
@@ -125,6 +146,14 @@ function markBlockedCell(
     raster.strokeIdsByCell[index].add(strokeId);
 }
 
+/**
+ * Renders a circular "disk" of ink onto the raster grid.
+ *
+ * @param raster - The raster to draw on.
+ * @param point - The center of the disk.
+ * @param radiusPx - The radius of the disk in world pixels.
+ * @param strokeId - The ID of the stroke being rendered.
+ */
 function markInkDisk(
     raster: Raster,
     point: Point,
@@ -144,6 +173,7 @@ function markInkDisk(
         for (let x = minX; x <= maxX; x += 1) {
             const dx = x + 0.5 - gx;
             const dy = y + 0.5 - gy;
+            // Standard circle equation: x^2 + y^2 <= r^2
             if (dx * dx + dy * dy <= radiusSquared) {
                 markBlockedCell(raster, x, y, strokeId);
             }
@@ -151,6 +181,10 @@ function markInkDisk(
     }
 }
 
+/**
+ * Transforms vector strokes (arrays of points) into a bitmap grid.
+ * This "thickens" the lines to ensure there are no gaps for the flood fill to leak through.
+ */
 function rasterizeStrokes(strokes: Stroke[], raster: Raster): void {
     const sampleStep = STROKE_SAMPLE_STEP_PX;
     const strokeRadius = STROKE_RADIUS_PX;
@@ -165,6 +199,7 @@ function rasterizeStrokes(strokes: Stroke[], raster: Raster): void {
             const current = stroke.points[index];
             const segmentLength = distance(previous, current);
             const steps = Math.max(1, Math.ceil(segmentLength / sampleStep));
+            // Linear interpolation between stroke points to ensure a continuous line.
             for (let step = 1; step <= steps; step += 1) {
                 const t = step / steps;
                 markInkDisk(
@@ -181,6 +216,7 @@ function rasterizeStrokes(strokes: Stroke[], raster: Raster): void {
     }
 }
 
+/** Utility to add a cell to the flood-fill queue if it hasn't been visited yet. */
 function enqueueWater(
     index: number,
     raster: Raster,
@@ -194,6 +230,11 @@ function enqueueWater(
     queueState.tail += 1;
 }
 
+/**
+ * Performs a BFS flood-fill from all edges of the grid.
+ * This identifies all areas that are "reachable" from the outside.
+ * Any areas that are NOT reached (and not ink) are considered "enclosed".
+ */
 function floodExterior(raster: Raster): void {
     const queueState = {
         queue: new Int32Array(raster.size),
@@ -201,6 +242,7 @@ function floodExterior(raster: Raster): void {
         tail: 0,
     };
 
+    // Seed the flood from all four boundaries of the grid.
     for (let x = 0; x < raster.width; x += 1) {
         enqueueWater(gridIndex(x, 0, raster.width), raster, queueState);
         enqueueWater(
@@ -239,6 +281,7 @@ function floodExterior(raster: Raster): void {
             }
             const neighbor = gridIndex(nx, ny, raster.width);
             if (raster.blocked[neighbor]) {
+                // If we hit ink, mark it as an "outside edge".
                 raster.outsideEdge[neighbor] = 1;
             } else {
                 enqueueWater(neighbor, raster, queueState);
@@ -247,6 +290,12 @@ function floodExterior(raster: Raster): void {
     }
 }
 
+/**
+ * Finds contiguous groups of "dry" cells (not ink, not water).
+ * These represent holes or enclosed regions within the drawing.
+ *
+ * @returns The number of components found and the indices of the largest one.
+ */
 function findDryComponents(raster: Raster): {
     componentCount: number;
     largest: number[];
@@ -263,6 +312,7 @@ function findDryComponents(raster: Raster): {
     let largest: number[] = [];
 
     for (let start = 0; start < raster.size; start += 1) {
+        // Skip ink, already-flooded areas, or already-visited dry areas.
         if (raster.blocked[start] || raster.water[start] || visited[start]) {
             continue;
         }
@@ -317,6 +367,10 @@ function findDryComponents(raster: Raster): {
     };
 }
 
+/**
+ * Identifies the set of world-space points and original strokes that form the boundary
+ * between the exterior "water" and the interior "dry" land.
+ */
 function collectOutsideEdge(raster: Raster): {
     edgePixels: Point[];
     strokeIds: string[];
@@ -340,6 +394,12 @@ function collectOutsideEdge(raster: Raster): {
     };
 }
 
+/**
+ * Checks how "circular" the boundary of the enclosed area is.
+ *
+ * @param edgePixels - The boundary pixels of the enclosed region.
+ * @returns Geometric metrics: center, radius, and perfection score.
+ */
 function scoreCircle(edgePixels: Point[]): {
     center: Point;
     radius: number;
@@ -364,8 +424,10 @@ function scoreCircle(edgePixels: Point[]): {
     const distances = edgePixels.map((point) => distance(point, center));
     const radius = mean(distances);
 
+    // Root Mean Square Error (RMSE) measures the average distance of pixels from the ideal circle perimeter.
     const rmse = stddev(distances);
     const normalizedRmse = rmse / Math.max(1, radius);
+    // Perfection is a 0-1 score where 1 is a mathematically perfect circle.
     const perfection = clamp(1 - normalizedRmse / MAX_NORMALIZED_RMSE);
 
     return {
@@ -377,6 +439,7 @@ function scoreCircle(edgePixels: Point[]): {
     };
 }
 
+/** Simple utility to count truthy values in a byte array. */
 function countCells(mask: Uint8Array): number {
     let count = 0;
     for (const value of mask) {
@@ -385,6 +448,21 @@ function countCells(mask: Uint8Array): number {
     return count;
 }
 
+/**
+ * Core algorithm for detecting hand-drawn closed shapes (like the spell circle).
+ * It uses a grid-based topological analysis:
+ * 1. Rasterize strokes onto a grid.
+ * 2. Flood-fill the grid from the outside.
+ * 3. Identify any "bubbles" (enclosed dry areas).
+ * 4. Verify if the bubble is large enough and circular enough.
+ *
+ * This approach is extremely robust to overlapping strokes, small gaps (due to raster thickening),
+ * and complex drawing orders.
+ *
+ * @param strokes - The strokes to analyze.
+ * @param config - Application configuration.
+ * @returns Detailed result indicating if a closure was found and its geometric properties.
+ */
 export function analyzeTopologicalClosure(
     strokes: Stroke[],
     config: AppConfig,
@@ -415,17 +493,21 @@ export function analyzeTopologicalClosure(
     floodExterior(raster);
 
     const dry = findDryComponents(raster);
+    // Calculate the physical area of the largest hole.
     const enclosedAreaPx =
         dry.largest.length * raster.cellSize * raster.cellSize;
     const boundsAreaPx =
         raster.width * raster.height * raster.cellSize * raster.cellSize;
 
+    // Minimum area threshold prevents tiny accidental loops (like in an 'e' or 'o') from being seen as the main ring.
     const minAreaPx = Math.max(
         MIN_ENCLOSED_AREA_PX,
         boundsAreaPx * MIN_ENCLOSED_AREA_RATIO,
     );
     const edge = collectOutsideEdge(raster);
     const circle = scoreCircle(edge.edgePixels);
+
+    // A closure is valid if it's big enough, round enough, and has a reasonable radius.
     const closed =
         enclosedAreaPx >= minAreaPx &&
         circle.radius >= config.ring.minRadius &&

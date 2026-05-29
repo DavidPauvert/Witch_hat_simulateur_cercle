@@ -1,9 +1,6 @@
 import { cleanStrokes, CleanedStroke } from './strokeCleaner';
 import { detectRing } from './ringDetector';
-import {
-    classifyStrokesAgainstRing,
-    summarizePolar,
-} from './coordinateNormalizer';
+import { classifyStrokesAgainstRing } from './coordinateNormalizer';
 import { buildSymbolCandidates } from './strokeGrouper';
 import { recognizeCandidates } from './symbolRecognizer';
 import { GLYPH_WARNINGS } from './glyphWarnings';
@@ -24,6 +21,10 @@ import {
     StrokeClassification,
 } from '../types';
 
+/**
+ * Recursively traverses an object and rounds all numeric values to a fixed precision.
+ * This is used to make the diagnostic output (AST) cleaner and more readable.
+ */
 function roundedDeep(value: any): any {
     if (Array.isArray(value)) {
         return value.map(roundedDeep);
@@ -39,12 +40,17 @@ function roundedDeep(value: any): any {
     return formatNumber(value);
 }
 
+/**
+ * Calculates a priority score for a recognized sigil.
+ * Sigils closer to the center are given a higher priority.
+ */
 function primarySigilScore(sigil: RecognitionResult): number {
     const layerBonus =
         sigil.layer === 'center' ? 0.12 : sigil.radiusNorm <= 0.45 ? 0.06 : 0;
     return sigil.confidence + layerBonus;
 }
 
+/** Filters the list of recognitions to only include valid sigils, sorted by confidence. */
 function recognizedSigils(
     recognitions: RecognitionResult[],
 ): RecognitionResult[] {
@@ -56,6 +62,7 @@ function recognizedSigils(
         .sort((a, b) => b.confidence - a.confidence);
 }
 
+/** Selects the most likely primary sigil from a list of possibilities. */
 function selectPrimarySigil(
     sigils: RecognitionResult[],
 ): RecognitionResult | null {
@@ -66,6 +73,9 @@ function selectPrimarySigil(
     );
 }
 
+/**
+ * Provides diagnostic details for drawing groups that the recognizer failed to identify.
+ */
 function summarizeUnknowns(
     candidates: SymbolCandidate[],
     recognitions: RecognitionResult[],
@@ -94,6 +104,10 @@ function summarizeUnknowns(
         });
 }
 
+/**
+ * Calculates a vector representing the average directional spread of the signs.
+ * Used to measure how balanced or "lopsided" the spell circle is.
+ */
 function calculateDirectionalBias(signs: RecognitionResult[]) {
     if (!signs.length) {
         return { x: 0, y: 0 };
@@ -102,6 +116,7 @@ function calculateDirectionalBias(signs: RecognitionResult[]) {
     const vector = signs.reduce(
         (sum, sign) => {
             const direction = vectorFromAngleDeg(sign.angleDeg);
+            // Weight signs by confidence, neatness, and size to determine their visual impact.
             const weight =
                 sign.confidence *
                 (sign.neatness ?? 0.6) *
@@ -124,6 +139,12 @@ function calculateDirectionalBias(signs: RecognitionResult[]) {
     };
 }
 
+/**
+ * Aggregates low-level drawing data into high-level quality metrics.
+ * Neatness: How well the strokes follow the ideal paths.
+ * Radial Symmetry: How evenly distributed the signs are around the circle.
+ * Instability: A penalty score based on mistakes, contamination, and messiness.
+ */
 function calculateGlobalMetrics(
     ring: RingCandidate,
     recognitions: RecognitionResult[],
@@ -142,6 +163,8 @@ function calculateGlobalMetrics(
         (recognition) => recognition.kind === 'sign',
     );
     const directionalBias = calculateDirectionalBias(signs);
+
+    // Penalties for various issues found during parsing.
     const unknownPenalty = clamp(unknowns.length / 6);
     const contaminatedPenalty = clamp(
         recognitions.filter(
@@ -175,11 +198,13 @@ function calculateGlobalMetrics(
     };
 }
 
+/** Removes internal geometric data (raw strokes) to keep the AST lightweight. */
 function stripCandidate(candidate: SymbolCandidate) {
     const { strokes, ...publicCandidate } = candidate;
     return publicCandidate;
 }
 
+/** Removes heavy internal diagnostics (like pixel bitmaps) from recognition results. */
 function stripRecognitionDiagnostics(recognition: RecognitionResult | null) {
     if (!recognition) {
         return null;
@@ -188,6 +213,9 @@ function stripRecognitionDiagnostics(recognition: RecognitionResult | null) {
     return publicRecognition as any;
 }
 
+/**
+ * Checks all aspects of the drawing to generate a list of human-readable warnings.
+ */
 function warningList(
     ring: RingCandidate,
     primarySigil: RecognitionResult | null,
@@ -256,6 +284,20 @@ export interface ClassificationResult {
     glyphAST: GlyphAST;
 }
 
+/**
+ * Main entrance for the drawing interpretation pipeline.
+ * It transforms raw hand-drawn strokes into a high-level Spell AST (Abstract Syntax Tree).
+ *
+ * Pipeline stages:
+ * 1. Clean and smooth strokes.
+ * 2. Detect the primary spell circle (ring).
+ * 3. Classify strokes based on their position relative to the ring.
+ * 4. Group strokes into symbol candidates.
+ * 5. Recognize symbols using the dictionary.
+ * 6. Aggregate results into the final AST and generate warnings.
+ *
+ * @returns An object containing both the intermediate data and the final GlyphAST.
+ */
 export function classifyDrawing({
     strokes,
     previousRing = null,
@@ -271,6 +313,7 @@ export function classifyDrawing({
     const ring = detectRing(cleanedStrokes, previousRing, config);
 
     if (!ring.found) {
+        // If no circle is found, the spell cannot be processed.
         const glyphAST: GlyphAST = {
             type: 'GlyphAST',
             version: config.appVersion,
@@ -297,32 +340,39 @@ export function classifyDrawing({
         };
     }
 
+    // Classify which strokes are the ring, which are symbols, and which layer they belong to.
     const classifications = classifyStrokesAgainstRing(
         cleanedStrokes,
         ring,
         config,
     );
+    // Cluster strokes that are physically close together into potential symbols.
     const candidates = buildSymbolCandidates(
         cleanedStrokes,
         classifications,
         ring,
         config,
     );
+    // Identify what those symbols are by comparing them to the dictionary.
     const recognitions = recognizeCandidates(candidates, dictionary, config);
+
     const sigils = recognizedSigils(recognitions);
     const primarySigil = selectPrimarySigil(sigils);
+
     const unsupportedMultipleSigils = sigils
         .filter(
             (recognition) =>
                 recognition.candidateId !== primarySigil?.candidateId,
         )
         .map(stripRecognitionDiagnostics);
+
     const signs = recognitions
         .filter(
             (recognition) =>
                 recognition.recognized && recognition.kind === 'sign',
         )
         .map(stripRecognitionDiagnostics);
+
     const unknowns = summarizeUnknowns(candidates, recognitions);
     const globalMetrics = calculateGlobalMetrics(ring, recognitions, unknowns);
     const warnings = warningList(
@@ -333,6 +383,7 @@ export function classifyDrawing({
         recognitions,
     );
 
+    // Build the final, serialized Abstract Syntax Tree.
     const glyphAST = roundedDeep({
         type: 'GlyphAST',
         version: config.appVersion,

@@ -35,6 +35,12 @@ interface CandidateInkCacheEntry {
     rotations: Map<number, Ink>;
 }
 
+/**
+ * Determines the set of rotation angles to check when matching a candidate against a template.
+ *
+ * @param options - Recognition options like allowed rotations or if it's rotation-invariant.
+ * @returns An array of degrees to test.
+ */
 function rotationSet(options: {
     allowedRotationsDeg?: number[];
     rotationInvariant?: boolean;
@@ -45,9 +51,11 @@ function rotationSet(options: {
     ) {
         return options.allowedRotationsDeg;
     }
+    // If rotation invariant, we check every 45 degrees.
     if (options.rotationInvariant) {
         return [0, 45, 90, 135, 180, 225, 270, 315];
     }
+    // By default, we only check the original orientation.
     return [0];
 }
 
@@ -56,6 +64,7 @@ interface RotationTransform {
     sin: number;
 }
 
+/** Pre-calculates sine and cosine for a given angle to speed up rotation math. */
 function rotationTransform(degrees: number): RotationTransform | null {
     if (!degrees) {
         return null;
@@ -68,11 +77,13 @@ function rotationTransform(degrees: number): RotationTransform | null {
     };
 }
 
+/** Measures how much a rotation deviates from the standard 0-degree orientation (0 to 1 scale). */
 function normalizedRotationMagnitude(degrees: number): number {
     const normalized = normalizeAngleDeg(degrees);
     return Math.min(normalized, 360 - normalized) / 180;
 }
 
+/** Rotates a normalized point (0..1 range) around the center (0.5, 0.5). */
 function rotatePoint(point: Point, transform: RotationTransform | null): Point {
     if (!transform) {
         return point;
@@ -86,6 +97,7 @@ function rotatePoint(point: Point, transform: RotationTransform | null): Point {
     };
 }
 
+/** Creates a new, empty bitmap layer. */
 function createLayer(size: number): Layer {
     return {
         mask: new Uint8Array(size * size),
@@ -93,10 +105,22 @@ function createLayer(size: number): Layer {
     };
 }
 
+/** Counts the number of non-zero pixels in a bitmap. */
 function countInk(mask: Uint8Array): number {
     return wasmCountInk(mask);
 }
 
+/**
+ * Renders vector strokes into a multi-layered bitmap for fuzzy matching.
+ *
+ * @param strokes - The strokes as arrays of points.
+ * @param rotationDeg - The angle to rotate the strokes by.
+ * @param size - The resolution of the resulting bitmap.
+ * @returns An Ink object containing three layers:
+ *          - core: The exact path (thin).
+ *          - soft: Slightly thickened path for minor errors.
+ *          - loose: Very thick path for larger deviations.
+ */
 function renderInk(
     strokes: Point[][],
     rotationDeg: number = 0,
@@ -104,25 +128,32 @@ function renderInk(
 ): Ink {
     const transform = rotationTransform(rotationDeg);
     const flatPoints: number[] = [];
-    
+
+    // Flatten points for WASM bridge: [x1, y1, x2, y2, NaN, NaN, x3, y3...]
+    // NaN pairs indicate the end of one stroke and the start of the next.
     for (const stroke of strokes ?? []) {
         if (!stroke?.length) continue;
         for (const p of stroke) {
             const rotated = rotatePoint(p, transform);
-            flatPoints.push(rotated.x);
-            flatPoints.push(rotated.y);
+            flatPoints.push(rotated.x, rotated.y);
         }
-        flatPoints.push(NaN);
-        flatPoints.push(NaN);
+        flatPoints.push(Number.NaN, Number.NaN);
     }
 
-    const layers = wasmRenderInkLayers(flatPoints, size, CORE_RADIUS, SOFT_RADIUS, LOOSE_RADIUS);
-    
+    // Call WASM to perform the heavy lifting of rendering and thickening the strokes.
+    const layers = wasmRenderInkLayers(
+        flatPoints,
+        size,
+        CORE_RADIUS,
+        SOFT_RADIUS,
+        LOOSE_RADIUS,
+    );
+
     if (layers) {
         return {
             core: { mask: layers.core, ink: countInk(layers.core) },
             soft: { mask: layers.soft, ink: countInk(layers.soft) },
-            loose: { mask: layers.loose, ink: countInk(layers.loose) }
+            loose: { mask: layers.loose, ink: countInk(layers.loose) },
         };
     }
 
@@ -133,12 +164,14 @@ function renderInk(
     };
 }
 
+/** Retrieves or generates the rasterized representation of a stroke template. */
 function templateInk(strokeTemplate: { strokes?: (Stroke | Point[])[] }): Ink {
     const cached = templateInkCache.get(strokeTemplate);
     if (cached) {
         return cached;
     }
 
+    // First, normalize the template's strokes to a standard scale and position.
     const normalized = normalizeStrokesForTemplate(
         strokeTemplate.strokes ?? [],
         {
@@ -152,6 +185,7 @@ function templateInk(strokeTemplate: { strokes?: (Stroke | Point[])[] }): Ink {
     return ink;
 }
 
+/** Retrieves or generates the rasterized representation of a candidate symbol at a specific rotation. */
 function candidateInk(candidate: SymbolCandidate, rotationDeg: number): Ink {
     let cached = candidateInkCache.get(candidate);
     if (!cached) {
@@ -176,10 +210,15 @@ function candidateInk(candidate: SymbolCandidate, rotationDeg: number): Ink {
     return ink;
 }
 
+/** Calculates the number of overlapping pixels between two bitmaps. */
 function maskOverlap(a: Uint8Array, b: Uint8Array): number {
     return wasmMaskOverlap(a, b);
 }
 
+/**
+ * Calculates the Sørensen–Dice coefficient, a similarity score from 0 to 1.
+ * 2 * (intersection) / (sum of total ink)
+ */
 function diceScore(
     a: Uint8Array,
     b: Uint8Array,
@@ -192,6 +231,7 @@ function diceScore(
     return clamp((maskOverlap(a, b) * 2) / (aInk + bInk));
 }
 
+/** Downsamples a bitmap into a smaller grid (e.g., 10x10) to check regional ink presence. */
 function occupiedCells(
     mask: Uint8Array,
     size: number = INK_SIZE,
@@ -200,6 +240,11 @@ function occupiedCells(
     return wasmOccupiedCells(mask, size, gridSize);
 }
 
+/**
+ * Compares two ink sets by looking at regional presence (downsampled grids).
+ * This helps detect if the candidate is missing large chunks of the template
+ * or has extra strokes in "forbidden" areas.
+ */
 function cellStats(candidateInk: Ink, referenceInk: Ink) {
     const candidateCoreCells = occupiedCells(candidateInk.core.mask);
     const candidateLooseCells = occupiedCells(candidateInk.loose.mask);
@@ -212,14 +257,18 @@ function cellStats(candidateInk: Ink, referenceInk: Ink) {
     let forbiddenCandidateCount = 0;
 
     for (let index = 0; index < referenceCoreCells.length; index += 1) {
+        // Did the template expect ink here?
         if (referenceCoreCells[index]) {
             requiredCount += 1;
+            // Did the candidate provide ink anywhere near this region?
             if (candidateLooseCells[index]) {
                 requiredCovered += 1;
             }
         }
+        // Did the candidate draw ink here?
         if (candidateCoreCells[index]) {
             candidateCount += 1;
+            // Is this region "empty" in the template?
             if (!referenceLooseCells[index]) {
                 forbiddenCandidateCount += 1;
             }
@@ -232,6 +281,7 @@ function cellStats(candidateInk: Ink, referenceInk: Ink) {
     const forbiddenCellInkRatio = candidateCount
         ? forbiddenCandidateCount / candidateCount
         : 1;
+    // Combine coverage and avoidance into a single score.
     const regionScore = clamp(
         requiredCellCoverage * 0.68 + (1 - forbiddenCellInkRatio) * 0.32,
     );
@@ -243,6 +293,12 @@ function cellStats(candidateInk: Ink, referenceInk: Ink) {
     };
 }
 
+/**
+ * Compares two Ink objects (candidate vs template) using multiple metrics.
+ *
+ * Complex: This uses "fuzzy" matching by comparing different thickening levels.
+ * We check if the candidate's thin lines fall within the template's thick lines, and vice versa.
+ */
 function compareInk(candidateInk: Ink, referenceInk: Ink) {
     const candidateInkCount = candidateInk.core.ink;
     const referenceInkCount = referenceInk.core.ink;
@@ -262,14 +318,17 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
         };
     }
 
+    // How much of the candidate's ink is "explained" by the template's path?
     const candidateExplainedRatio = clamp(
         maskOverlap(candidateInk.core.mask, referenceInk.loose.mask) /
             candidateInkCount,
     );
+    // How much of the template's path is "covered" by the candidate's ink?
     const templateCoveredRatio = clamp(
         maskOverlap(referenceInk.core.mask, candidateInk.loose.mask) /
             referenceInkCount,
     );
+    // Intersection over Union (Dice) on moderately thickened paths.
     const softDiceScore = diceScore(
         candidateInk.soft.mask,
         referenceInk.soft.mask,
@@ -279,6 +338,8 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
     const unexplainedInkRatio = clamp(1 - candidateExplainedRatio);
     const missingInkRatio = clamp(1 - templateCoveredRatio);
     const regions = cellStats(candidateInk, referenceInk);
+
+    // Final weighted score balancing detail matching and regional topology.
     const inkScore = clamp(
         candidateExplainedRatio * 0.32 +
             templateCoveredRatio * 0.32 +
@@ -286,6 +347,8 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
             regions.requiredCellCoverage * 0.16 +
             (1 - regions.forbiddenCellInkRatio) * 0.06,
     );
+    // High contamination means the candidate has too much ink where it shouldn't,
+    // or is missing too much where it should be.
     const contaminationRisk = clamp(
         clamp((unexplainedInkRatio - 0.26) / 0.34) * 0.58 +
             clamp((missingInkRatio - 0.46) / 0.34) * 0.22 +
@@ -304,6 +367,16 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
     };
 }
 
+/**
+ * Main entry point for matching a hand-drawn symbol against a reference template.
+ * It uses a multi-layered bitmap matching approach that is robust to hand jitter
+ * and slight geometric distortions.
+ *
+ * @param candidate - The user's hand-drawn symbol.
+ * @param strokeTemplate - The dictionary template to compare against.
+ * @param options - Matching parameters like allowed rotations.
+ * @returns A confidence score and detailed matching metrics.
+ */
 export function scoreStrokeTemplate(
     candidate: SymbolCandidate,
     strokeTemplate: { strokes?: (Stroke | Point[])[] },
@@ -348,11 +421,13 @@ export function scoreStrokeTemplate(
         regionScore: 0,
     };
 
+    // Test each allowed rotation and pick the one with the highest similarity score.
     for (const rotationDeg of rotationSet(options)) {
         const inkMatch = compareInk(
             candidateInk(candidate, rotationDeg),
             referenceInk,
         );
+        // Apply a small penalty for rotation to favor the natural orientation if multiple matches are close.
         const rotationPenalty =
             normalizedRotationMagnitude(rotationDeg) *
             ROTATION_STABILITY_MARGIN;
@@ -366,6 +441,9 @@ export function scoreStrokeTemplate(
         }
     }
 
+    // Complex: Contamination Capping.
+    // If the candidate has too much "extra" ink that doesn't belong to the template,
+    // we aggressively cap the confidence to prevent false positives (e.g. matching a scribble to a simple line).
     const contaminationCap =
         best.unexplainedInkRatio > 0.36 && best.templateCoveredRatio < 0.82
             ? clamp(0.62 - (best.unexplainedInkRatio - 0.36) * 0.8, 0.2, 1)
