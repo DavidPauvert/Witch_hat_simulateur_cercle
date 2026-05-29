@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Cinzel:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    html,
+    body,
+    #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+
+    body {
+        background-color: #3f3930;
+        font-family: 'IM Fell English', Georgia, serif;
+        color: #241b16;
+    }
+
+    button {
+        @apply transition-all active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-[0.48] disabled:transform-none;
+    }
+}
+
+@layer components {
+    .wha-panel {
+        @apply bg-[rgba(255,247,219,0.88)] border border-[rgba(255,247,219,0.28)] rounded-wha shadow-wha-panel overflow-hidden flex flex-col;
+    }
+
+    .wha-button {
+        @apply min-h-[36px] border border-[rgba(36,27,22,0.28)] rounded-[6px] px-[14px] bg-[#fff2c5] text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] hover:bg-[#ffe6a3];
+    }
+
+    .wha-toggle-input {
+        @apply appearance-none relative w-[38px] h-[20px] rounded-full bg-[rgba(36,27,22,0.24)] shadow-[inset_0_0_0_1px_rgba(36,27,22,0.2)] cursor-pointer;
+    }
+
+    .wha-toggle-input::before {
+        @apply content-[""] absolute top-[3px] left-[3px] w-[14px] h-[14px] rounded-full bg-[#fffbe9] transition-transform duration-140 ease-in-out;
+    }
+
+    .wha-toggle-input:checked {
+        @apply bg-teal;
+    }
+
+    .wha-toggle-input:checked::before {
+        @apply translate-x-[18px];
+    }
+}
+
+@layer utilities {
+    .perspective-portal {
+        perspective: 900px;
+        perspective-origin: 50% 56%;
+    }
+
+    .rotate-x-portal {
+        transform: translateY(16%) rotateX(62deg) scale(0.98);
+    }
+
+    .transform-origin-portal {
+        transform-origin: 50% 64%;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(36, 27, 22, 0.16);
+        border-radius: 3px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: rgba(36, 27, 22, 0.28);
+    }
+}

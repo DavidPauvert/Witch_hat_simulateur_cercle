@@ -1,15 +1,29 @@
 {
-  "name": "witch-hat-atelier-spell-simulator",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5173",
-    "start": "npm run dev",
-    "build": "vite build",
-    "test": "node --test tests"
-  },
-  "devDependencies": {
-    "vite": "^6.4.0"
-  }
+    "name": "witch-hat-atelier-spell-simulator",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite --host 127.0.0.1 --port 5173",
+        "start": "npm run dev",
+        "build": "tsc && vite build",
+        "preview": "vite preview",
+        "test": "vitest"
+    },
+    "dependencies": {
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "zustand": "^4.5.2"
+    },
+    "devDependencies": {
+        "@types/react": "^18.3.3",
+        "@types/react-dom": "^18.3.0",
+        "@vitejs/plugin-react-swc": "^3.7.0",
+        "autoprefixer": "^10.4.19",
+        "postcss": "^8.4.38",
+        "tailwindcss": "^3.4.4",
+        "typescript": "^5.4.5",
+        "vite": "^6.4.0",
+        "vitest": "^1.6.0"
+    }
 }
