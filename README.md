@@ -1,3 +1,5 @@
 # Witch Hat Atelier Spell Simulator
 
-je sais pas ok ?
+tu fais un `npm install` puis un `npm run dev` 
+
+bon bah voila hein

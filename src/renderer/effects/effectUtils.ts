@@ -12,8 +12,11 @@ import {
     Particle,
 } from '../../types';
 
+import { WebGLParticle } from '../webgl/webglRenderer';
+
 export interface EffectState {
     particles: any[];
+    webglParticles: WebGLParticle[];
     [key: string]: any;
 }
 
@@ -22,6 +25,7 @@ export function resetParticleState(state: EffectState): void {
         delete state[key];
     }
     state.particles = [];
+    state.webglParticles = [];
 }
 
 export function particleAlpha(particle: { age: number; life: number }): number {
@@ -41,6 +45,7 @@ export function spellLifetimeFrames(
     extraFrames: number = 36,
 ): number {
     const durationSeconds = Number(spellIR?.duration);
+    if (durationSeconds === Infinity) return 600;
     return Number.isFinite(durationSeconds) && durationSeconds > 0
         ? durationSeconds * 60 + extraFrames
         : 600;

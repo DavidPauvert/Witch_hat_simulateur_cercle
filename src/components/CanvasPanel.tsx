@@ -7,6 +7,7 @@ import { CONFIG } from '../config';
 const CanvasPanel: React.FC = () => {
     const glyphCanvasRef = useRef<HTMLCanvasElement>(null);
     const effectCanvasRef = useRef<HTMLCanvasElement>(null);
+    const webglCanvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [renderer, setRenderer] = useState<CanvasRenderer | null>(null);
 
@@ -22,11 +23,12 @@ const CanvasPanel: React.FC = () => {
     } = useStore();
 
     useEffect(() => {
-        if (glyphCanvasRef.current && effectCanvasRef.current) {
+        if (glyphCanvasRef.current && effectCanvasRef.current && webglCanvasRef.current) {
             setRenderer(
                 new CanvasRenderer({
                     glyphCanvas: glyphCanvasRef.current,
                     effectCanvas: effectCanvasRef.current,
+                    webglCanvas: webglCanvasRef.current,
                     config: CONFIG,
                 }),
             );
@@ -122,6 +124,8 @@ const CanvasPanel: React.FC = () => {
             glyphCanvasRef.current!.height = height;
             effectCanvasRef.current!.width = width;
             effectCanvasRef.current!.height = height;
+            webglCanvasRef.current!.width = width;
+            webglCanvasRef.current!.height = height;
 
             if (oldWidth > 0 && oldHeight > 0) {
                 scaleStrokes(width / oldWidth, height / oldHeight);
@@ -147,6 +151,21 @@ const CanvasPanel: React.FC = () => {
             ref={containerRef}
             className={`canvas-shell relative w-full h-full max-h-none flex-1 bg-paper touch-none overflow-hidden perspective-portal transition-colors duration-980 ease-in-out ${spellIR?.active ? 'bg-[#3a332b]' : ''}`}
         >
+            <canvas
+                id="effectCanvas"
+                ref={effectCanvasRef}
+                width="1200"
+                height="800"
+                className="absolute inset-0 w-full h-full z-[10] pointer-events-none"
+            />
+            <canvas
+                id="webglCanvas"
+                ref={webglCanvasRef}
+                width="1200"
+                height="800"
+                className="absolute inset-0 w-full h-full z-[11] pointer-events-none"
+            />
+
             <div
                 className={`w-full h-full relative transition-all duration-980 transform-origin-portal ${spellIR?.active ? 'rotate-x-portal shadow-[inset_0_1px_0_rgba(255,251,233,0.52),0_28px_38px_rgba(36,27,22,0.3)] filter drop-shadow-[0_30px_24px_rgba(36,27,22,0.34)]' : ''}`}
                 style={{
@@ -160,13 +179,6 @@ const CanvasPanel: React.FC = () => {
                     width="1200"
                     height="800"
                     className={`absolute inset-0 w-full h-full z-[1] transform-origin-portal transition-all duration-980 ${isLocked ? 'cursor-not-allowed' : 'cursor-crosshair'}`}
-                />
-                <canvas
-                    id="effectCanvas"
-                    ref={effectCanvasRef}
-                    width="1200"
-                    height="800"
-                    className="absolute inset-0 w-full h-full z-[2] pointer-events-none"
                 />
             </div>
 

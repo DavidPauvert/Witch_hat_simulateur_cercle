@@ -27,6 +27,8 @@ const FAILED_FLICKER_DASH = [10, 14];
 const FAILED_FLICKER_RADIUS_SCALE = 0.92;
 const FAILED_FLICKER_RADIUS_PULSE_SCALE = 0.02;
 
+import { WebGLRenderer } from './webgl/webglRenderer';
+
 const EFFECTS: Record<
     string,
     (
@@ -47,7 +49,8 @@ const EFFECTS: Record<
 
 function spellDurationMs(spellIR: SpellIR): number {
     const durationSeconds = Number(spellIR?.duration);
-    return Number.isFinite(durationSeconds) && durationSeconds > 0
+    return (Number.isFinite(durationSeconds) || durationSeconds === Infinity) &&
+        durationSeconds > 0
         ? durationSeconds * 1000
         : 0;
 }
@@ -71,18 +74,26 @@ function spellEmission(spellIR: SpellIR, timestamp: number): number {
 }
 
 export class SpellEffectRenderer {
-    canvas: HTMLCanvasElement;
-    ctx: CanvasRenderingContext2D;
+    canvas2d: HTMLCanvasElement;
+    ctx2d: CanvasRenderingContext2D;
+    webglCanvas: HTMLCanvasElement;
+    webglRenderer: WebGLRenderer;
     config: AppConfig;
     state: EffectState;
     lastSignature: string | null;
     lastTime: number | null;
 
-    constructor(canvas: HTMLCanvasElement, config: AppConfig) {
-        this.canvas = canvas;
-        this.ctx = canvas.getContext('2d')!;
+    constructor(
+        canvas2d: HTMLCanvasElement,
+        webglCanvas: HTMLCanvasElement,
+        config: AppConfig,
+    ) {
+        this.canvas2d = canvas2d;
+        this.ctx2d = canvas2d.getContext('2d')!;
+        this.webglCanvas = webglCanvas;
+        this.webglRenderer = new WebGLRenderer(webglCanvas);
         this.config = config;
-        this.state = { particles: [] };
+        this.state = { particles: [], webglParticles: [] };
         this.lastSignature = null;
         this.lastTime = null;
     }
@@ -93,12 +104,14 @@ export class SpellEffectRenderer {
         timestamp: number,
         options: { showGuides?: boolean } = {},
     ) {
-        const width = this.canvas.width;
-        const height = this.canvas.height;
-        const ctx = this.ctx;
+        const width = this.canvas2d.width;
+        const height = this.canvas2d.height;
+        const ctx = this.ctx2d;
         ctx.clearRect(0, 0, width, height);
 
         if (!ring?.found || !spellIR) {
+            // Clear WebGL too
+            this.webglRenderer.render([], width, height);
             return;
         }
 
@@ -126,6 +139,7 @@ export class SpellEffectRenderer {
             if (options.showGuides) {
                 this.drawFailedFlicker(ring, timestamp);
             }
+            this.webglRenderer.render([], width, height);
             return;
         }
 
@@ -133,61 +147,73 @@ export class SpellEffectRenderer {
             if (options.showGuides) {
                 this.drawPreparedGlow(ring, timestamp);
             }
+            this.webglRenderer.render([], width, height);
             return;
         }
 
         const drawEffect = spellIR.element ? EFFECTS[spellIR.element] : null;
         if (!drawEffect) {
+            this.webglRenderer.render([], width, height);
             return;
         }
 
         const emission = spellEmission(spellIR, timestamp);
         if (emission <= 0 && !this.state.particles.length) {
+            this.webglRenderer.render([], width, height);
             return;
         }
 
         // @ts-ignore - emission is transient for rendering
         const renderSpellIR: SpellIR = { ...spellIR, emission };
+
+        // Clear WebGL particles for this frame (they will be populated by drawEffect)
+        this.state.webglParticles = [];
+
+        // Legacy 2D effects might still use the context directly for some things
+        // but we'll move most to WebGL
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         drawEffect(ctx, this.state, renderSpellIR, ring, dt, this.config);
         ctx.restore();
+
+        // Render WebGL particles
+        this.webglRenderer.render(this.state.webglParticles, width, height);
     }
 
     drawRingGlow(ring: RingCandidate, isPrepared: boolean) {
         const alpha = isPrepared
             ? RING_GLOW_PREPARED_ALPHA
             : RING_GLOW_IDLE_ALPHA;
-        this.ctx.save();
-        this.ctx.strokeStyle = `rgba(255, 217, 114, ${alpha})`;
-        this.ctx.lineWidth = RING_GLOW_LINE_WIDTH;
-        this.ctx.beginPath();
-        this.ctx.arc(
+        this.ctx2d.save();
+        this.ctx2d.strokeStyle = `rgba(255, 217, 114, ${alpha})`;
+        this.ctx2d.lineWidth = RING_GLOW_LINE_WIDTH;
+        this.ctx2d.beginPath();
+        this.ctx2d.arc(
             ring.center.x,
             ring.center.y,
             ring.radius,
             0,
             FULL_CIRCLE_RAD,
         );
-        this.ctx.stroke();
-        this.ctx.restore();
+        this.ctx2d.stroke();
+        this.ctx2d.restore();
     }
 
     drawPreparedGlow(ring: RingCandidate, timestamp: number) {
         const pulse =
             0.5 + Math.sin(timestamp / PREPARED_PULSE_PERIOD_MS) * 0.5;
-        this.ctx.save();
-        this.ctx.fillStyle = `rgba(88, 171, 174, ${PREPARED_GLOW_BASE_ALPHA + pulse * PREPARED_GLOW_PULSE_ALPHA})`;
-        this.ctx.beginPath();
-        this.ctx.arc(
+        this.ctx2d.save();
+        this.ctx2d.fillStyle = `rgba(88, 171, 174, ${PREPARED_GLOW_BASE_ALPHA + pulse * PREPARED_GLOW_PULSE_ALPHA})`;
+        this.ctx2d.beginPath();
+        this.ctx2d.arc(
             ring.center.x,
             ring.center.y,
             ring.radius * PREPARED_GLOW_RADIUS_SCALE,
             0,
             FULL_CIRCLE_RAD,
         );
-        this.ctx.fill();
-        this.ctx.restore();
+        this.ctx2d.fill();
+        this.ctx2d.restore();
     }
 
     drawFailedFlicker(ring: RingCandidate, timestamp: number) {
@@ -195,12 +221,12 @@ export class SpellEffectRenderer {
             0,
             Math.sin(timestamp / FAILED_FLICKER_PERIOD_MS),
         );
-        this.ctx.save();
-        this.ctx.strokeStyle = `rgba(184, 69, 49, ${FAILED_FLICKER_BASE_ALPHA + pulse * FAILED_FLICKER_PULSE_ALPHA})`;
-        this.ctx.lineWidth = FAILED_FLICKER_LINE_WIDTH;
-        this.ctx.setLineDash(FAILED_FLICKER_DASH);
-        this.ctx.beginPath();
-        this.ctx.arc(
+        this.ctx2d.save();
+        this.ctx2d.strokeStyle = `rgba(184, 69, 49, ${FAILED_FLICKER_BASE_ALPHA + pulse * FAILED_FLICKER_PULSE_ALPHA})`;
+        this.ctx2d.lineWidth = FAILED_FLICKER_LINE_WIDTH;
+        this.ctx2d.setLineDash(FAILED_FLICKER_DASH);
+        this.ctx2d.beginPath();
+        this.ctx2d.arc(
             ring.center.x,
             ring.center.y,
             ring.radius *
@@ -209,7 +235,7 @@ export class SpellEffectRenderer {
             0,
             FULL_CIRCLE_RAD,
         );
-        this.ctx.stroke();
-        this.ctx.restore();
+        this.ctx2d.stroke();
+        this.ctx2d.restore();
     }
 }

@@ -96,23 +96,25 @@ function spawnSuspendedFireParticle(
     const angle = Math.random() * Math.PI * 2;
     const radius = Math.sqrt(Math.random());
     const phase = randomBetween(0, Math.PI * 2);
-    const homeX =
-        portal.center.x + Math.cos(angle) * flow.suspendedRadiusX * radius;
-    const homeY =
-        portal.center.y -
-        flow.suspendedHeight +
-        Math.sin(angle) * flow.suspendedRadiusY * radius;
+    
+    // Position in paper space (Z is up)
+    const homeX = ring.center.x + Math.cos(angle) * flow.suspendedRadiusX * radius;
+    const homeY = ring.center.y + Math.sin(angle) * flow.suspendedRadiusY * radius;
+    const homeZ = flow.suspendedHeight;
+    
     const startJitter = ring.radius * 0.025;
-    const flicker =
-        Math.sin(frame * 0.11 + phase) * (1 - spellIR.stability) * 0.42;
+    const flicker = Math.sin(frame * 0.11 + phase) * (1 - spellIR.stability) * 0.42;
 
     return {
         x: homeX + randomBetween(-startJitter, startJitter),
         y: homeY + randomBetween(-startJitter, startJitter),
+        z: homeZ + randomBetween(-startJitter, startJitter),
         vx: randomBetween(-0.28, 0.28) + flicker * 0.32,
         vy: randomBetween(-0.22, 0.22),
+        vz: randomBetween(-0.15, 0.15),
         homeX,
         homeY,
+        homeZ,
         radius:
             randomBetween(8, 18) *
             (0.86 + spellIR.force * 0.22) *
@@ -132,56 +134,38 @@ function spawnFlowFireParticle(
     const scale = effectScale(spellIR);
     const focus = effectFocus(spellIR);
     const convergence = flow.convergence;
-    const source = randomPortalPoint(
-        portal,
-        Math.min(0.84, 0.36 + scale * 0.12 + spellIR.spread * 0.2) *
-            (1 - convergence.strength * 0.34) *
-            (1 - focus * 0.24),
-        Math.min(0.84, 0.42 + scale * 0.1 + spellIR.spread * 0.18) *
-            (1 - convergence.strength * 0.34) *
-            (1 - focus * 0.24),
-    );
-    const surfaceJitter =
-        ring.radius *
-        (0.025 + spellIR.spread * 0.05) *
-        scale *
-        (1 - focus * 0.4);
+    
+    // Spawn on the paper surface
+    const angle = Math.random() * Math.PI * 2;
+    const radius = Math.sqrt(Math.random());
+    const sourceX = ring.center.x + Math.cos(angle) * ring.radius * 0.4 * radius;
+    const sourceY = ring.center.y + Math.sin(angle) * ring.radius * 0.4 * radius;
+    
     const speed =
         randomBetween(1.8, 4.2) *
         (0.5 + spellIR.force) *
-        (0.92 + scale * 0.12) *
-        (1 - flow.suspension * 0.42) *
-        (1 - convergence.strength * 0.24);
-    const jitter =
-        (1 - spellIR.stability) *
-        1.8 *
-        (1 - flow.suspension * 0.3) *
-        (1 - convergence.strength * 0.4) *
-        (1 - focus * 0.46);
-    const phase = randomBetween(0, Math.PI * 2);
+        (0.92 + scale * 0.12);
+    
+    const dirX = spellIR.direction?.x ?? 0;
+    const dirY = spellIR.direction?.y ?? 0;
+    const dirZ = spellIR.direction?.z ?? 1;
+
+    const jitter = (1 - spellIR.stability) * 0.5;
 
     return {
-        x:
-            source.x +
-            flow.side.x * randomBetween(-surfaceJitter, surfaceJitter),
-        y:
-            source.y +
-            flow.side.y * randomBetween(-surfaceJitter, surfaceJitter),
-        vx:
-            flow.direction.x * speed +
-            flow.side.x * randomBetween(-jitter, jitter),
-        vy:
-            flow.direction.y * speed +
-            flow.side.y * randomBetween(-jitter, jitter),
+        x: sourceX,
+        y: sourceY,
+        z: 0,
+        vx: dirX * speed + randomBetween(-jitter, jitter),
+        vy: dirY * speed + randomBetween(-jitter, jitter),
+        vz: dirZ * speed + randomBetween(-jitter, jitter),
         radius:
             randomBetween(5, 14) *
             (0.75 + spellIR.force) *
             (0.82 + scale * 0.28),
-        phase,
+        phase: randomBetween(0, Math.PI * 2),
         age: 0,
-        life: convergence.active
-            ? convergence.life
-            : randomBetween(32, 62) * (0.88 + spellIR.stability * 0.34),
+        life: randomBetween(32, 62) * (0.88 + spellIR.stability * 0.34),
     };
 }
 
@@ -210,65 +194,59 @@ function updateSuspendedFireParticle(
     const targetY =
         particle.homeY +
         Math.sin(particle.phase * 1.7 + particle.age * 0.048) *
-            flow.suspendedBob;
+            flow.suspendedWander;
+    const targetZ = 
+        particle.homeZ + 
+        Math.sin(particle.phase * 2.1 + particle.age * 0.052) * flow.suspendedBob;
+
     particle.vx += (targetX - particle.x) * flow.suspendedTension * dt;
     particle.vy += (targetY - particle.y) * flow.suspendedTension * dt;
+    particle.vz += (targetZ - particle.z) * flow.suspendedTension * dt;
+    
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
+    particle.z += particle.vz * dt;
+    
     particle.vx *= flow.suspendedDamping;
     particle.vy *= flow.suspendedDamping;
+    particle.vz *= flow.suspendedDamping;
 }
 
 function updateFlowFireParticle(particle: any, flow: FireFlow, dt: number) {
     particle.age += dt;
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
-    particle.vx *= 0.992 - flow.convergence.progress * 0.045;
-    particle.vy *= 0.992 - flow.convergence.progress * 0.045;
+    particle.z += particle.vz * dt;
+    
+    // Simple gravity/drag
+    particle.vx *= 0.98;
+    particle.vy *= 0.98;
+    particle.vz *= 0.98;
 }
 
-function drawFireParticle(
-    ctx: CanvasRenderingContext2D,
+function queueFireParticle(
+    state: EffectState,
     particle: any,
     flow: FireFlow,
     spellIR: SpellIR,
     opacity: number,
 ) {
-    const depth = flow.suspended
-        ? clamp(0.5 + Math.sin(particle.phase + particle.age * 0.08) * 0.28)
-        : particleDepth(particle);
-    const alpha =
-        flow.suspended || flow.convergence.active
-            ? steadyParticleAlpha(particle, spellIR, 10) * (0.82 + depth * 0.22)
-            : particleAlpha(particle) * (0.78 + depth * 0.24) * opacity;
-    const displayRadius = flow.suspended
-        ? particle.radius *
-          (1.04 + depth * 0.22) *
-          (1 - flow.convergence.progress * 0.2)
-        : particle.radius *
-          (0.86 + depth * 0.64) *
-          (1 - flow.convergence.progress * 0.24);
-    const point = convergePoint(
-        { x: particle.x, y: particle.y },
-        flow.convergence,
-        particle.phase,
-    );
-    const gradient = ctx.createRadialGradient(
-        point.x,
-        point.y,
-        0,
-        point.x,
-        point.y,
-        displayRadius * (1.2 - alpha * 0.2),
-    );
+    const alpha = (1.0 - particle.age / particle.life) * opacity;
+    if (alpha <= 0) return;
 
-    gradient.addColorStop(0, `rgba(255, 242, 160, ${alpha * 0.9})`);
-    gradient.addColorStop(0.45, `rgba(243, 116, 43, ${alpha * 0.7})`);
-    gradient.addColorStop(1, `rgba(176, 47, 32, 0)`);
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, displayRadius, 0, Math.PI * 2);
-    ctx.fill();
+    // Fire colors: yellow core to red outer
+    // r, g, b, a
+    const r = 1.0;
+    const g = 0.4 + alpha * 0.5;
+    const b = 0.1 + alpha * 0.2;
+
+    state.webglParticles.push({
+        x: particle.x,
+        y: particle.y,
+        z: particle.z,
+        radius: particle.radius * (0.8 + alpha * 0.4),
+        r, g, b, a: alpha * 0.8
+    });
 }
 
 export function drawFireEffect(
@@ -284,14 +262,13 @@ export function drawFireEffect(
     const portal = activePortalPlane(ctx.canvas, ring);
     state.fireFrame = (state.fireFrame ?? 0) + dt;
     const flow = fireFlowConfig(spellIR, ring, portal, state.fireFrame);
-    const baseCount = flow.suspended
-        ? 96 + spellIR.force * 74 + spellIR.spread * 52
-        : config.renderer.particleBaseCount + spellIR.force * 92;
+    
     const targetCount = scaledParticleCount(
-        baseCount * (0.78 + scale * 0.32),
+        config.renderer.particleBaseCount * (0.78 + scale * 0.32),
         spellIR,
         config,
     );
+    
     while (state.particles.length < targetCount) {
         state.particles.push(
             spawnFireParticle(spellIR, ring, portal, flow, state.fireFrame),
@@ -304,7 +281,7 @@ export function drawFireEffect(
         } else {
             updateFlowFireParticle(particle, flow, dt);
         }
-        drawFireParticle(ctx, particle, flow, spellIR, opacity);
+        queueFireParticle(state, particle, flow, spellIR, opacity);
     }
 
     pruneParticles(state);

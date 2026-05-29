@@ -127,20 +127,7 @@ function calculateSpellDuration({
     quality: number;
     neatness: number;
 }): number {
-    const durationScore = clamp(
-        quality * SPELL_PARAMETER_TUNING.durationQualityWeight +
-            neatness * SPELL_PARAMETER_TUNING.durationNeatnessWeight +
-            (primarySemantic.lifetimeBias ?? 0) +
-            deltas.lifetimeBias,
-    );
-
-    return clamp(
-        SPELL_PARAMETER_TUNING.durationMinSeconds +
-            Math.pow(durationScore, SPELL_PARAMETER_TUNING.durationCurve) *
-                SPELL_PARAMETER_TUNING.durationSecondsScale,
-        SPELL_PARAMETER_TUNING.durationMinSeconds,
-        SPELL_PARAMETER_TUNING.durationMaxSeconds,
-    );
+    return Infinity;
 }
 
 export function compileSpell({

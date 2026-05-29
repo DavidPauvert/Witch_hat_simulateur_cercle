@@ -1,101 +1,12 @@
 import { randomBetween } from '../../utils/geometry';
 import {
-    activePortalPlane,
-    convergePoint,
     effectOpacity,
     effectScale,
-    elementFlow,
-    narrowedByFocusAndConvergence,
-    particleAlpha,
-    particleDepth,
     pruneParticles,
-    randomPortalPoint,
     scaledParticleCount,
-    steadyParticleAlpha,
     EffectState,
-    Portal,
-    ElementFlow,
 } from './effectUtils';
 import { SpellIR, RingCandidate, AppConfig } from '../../types';
-
-interface EarthFlow extends ElementFlow {
-    sourceRadiusX: number;
-    sourceRadiusY: number;
-    surfaceJitter: number;
-    speed: number;
-}
-
-function earthFlowConfig(
-    spellIR: SpellIR,
-    ring: RingCandidate,
-    portal: Portal,
-    frame: number,
-): EarthFlow {
-    const flow = elementFlow(spellIR, portal, frame);
-    const { scale, focus, convergence } = flow;
-
-    return {
-        ...flow,
-        sourceRadiusX: narrowedByFocusAndConvergence(
-            Math.min(0.78, 0.34 + scale * 0.1 + spellIR.spread * 0.18),
-            focus,
-            convergence.strength,
-            0.28,
-            0.32,
-        ),
-        sourceRadiusY: narrowedByFocusAndConvergence(
-            Math.min(0.78, 0.4 + scale * 0.08 + spellIR.spread * 0.16),
-            focus,
-            convergence.strength,
-            0.28,
-            0.32,
-        ),
-        surfaceJitter: narrowedByFocusAndConvergence(
-            ring.radius * (0.025 + spellIR.spread * 0.06) * scale,
-            focus,
-            convergence.strength,
-            0.4,
-            0.34,
-        ),
-        speed:
-            randomBetween(0.8, 2.8) *
-            (0.6 + spellIR.force) *
-            (0.9 + scale * 0.08) *
-            (1 - convergence.strength * 0.32),
-    };
-}
-
-function spawnEarthParticle(spellIR: SpellIR, portal: Portal, flow: EarthFlow) {
-    const source = randomPortalPoint(
-        portal,
-        flow.sourceRadiusX,
-        flow.sourceRadiusY,
-    );
-    const phase = randomBetween(0, Math.PI * 2);
-
-    return {
-        x:
-            source.x +
-            flow.side.x *
-                randomBetween(-flow.surfaceJitter, flow.surfaceJitter),
-        y:
-            source.y +
-            flow.side.y *
-                randomBetween(-flow.surfaceJitter, flow.surfaceJitter),
-        vx:
-            flow.direction.x * flow.speed +
-            randomBetween(-0.35, 0.35) * flow.scale,
-        vy:
-            flow.direction.y * flow.speed +
-            randomBetween(-0.35, 0.35) * flow.scale,
-        radius: randomBetween(4, 11) * (0.85 + flow.scale * 0.2),
-        phase,
-        age: 0,
-        life: flow.convergence.active
-            ? flow.convergence.life
-            : randomBetween(50, 92),
-    };
-}
 
 export function drawEarthEffect(
     ctx: CanvasRenderingContext2D,
@@ -107,43 +18,67 @@ export function drawEarthEffect(
 ) {
     const scale = effectScale(spellIR);
     const opacity = effectOpacity(spellIR);
-    const portal = activePortalPlane(ctx.canvas, ring);
     state.earthFrame = (state.earthFrame ?? 0) + dt;
-    const flow = earthFlowConfig(spellIR, ring, portal, state.earthFrame);
+    
     const targetCount = scaledParticleCount(
         (68 + spellIR.force * 78) * (0.82 + scale * 0.28),
         spellIR,
         config,
     );
+    
     while (state.particles.length < targetCount) {
-        state.particles.push(spawnEarthParticle(spellIR, portal, flow));
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.sqrt(Math.random()) * ring.radius * 0.35;
+        const speed = (1.5 + spellIR.force * 2.5);
+        const dirX = spellIR.direction?.x ?? 0;
+        const dirY = spellIR.direction?.y ?? 0;
+        const dirZ = spellIR.direction?.z ?? 1;
+
+        state.particles.push({
+            x: ring.center.x + Math.cos(angle) * radius,
+            y: ring.center.y + Math.sin(angle) * radius,
+            z: 0,
+            vx: dirX * speed + randomBetween(-0.4, 0.4),
+            vy: dirY * speed + randomBetween(-0.4, 0.4),
+            vz: dirZ * speed + randomBetween(-0.4, 0.4),
+            radius: randomBetween(4, 11) * (0.85 + scale * 0.2),
+            age: 0,
+            life: randomBetween(50, 92),
+        });
     }
 
     for (const particle of state.particles) {
         particle.age += dt;
         particle.x += particle.vx * dt;
         particle.y += particle.vy * dt;
-        particle.vx *= 0.985 - flow.convergence.progress * 0.05;
-        particle.vy *= 0.985 - flow.convergence.progress * 0.05;
+        particle.z += particle.vz * dt;
+        
+        // Earth drag/gravity
+        particle.vz -= 0.05 * dt;
+        particle.vx *= 0.98;
+        particle.vy *= 0.98;
+        particle.vz *= 0.98;
 
-        const depth = particleDepth(particle);
-        const alpha = flow.convergence.active
-            ? steadyParticleAlpha(particle, spellIR, 10) * (0.78 + depth * 0.22)
-            : particleAlpha(particle) * (0.78 + depth * 0.22) * opacity;
-        const size =
-            particle.radius *
-            (0.9 + depth * 0.54) *
-            (1 - flow.convergence.progress * 0.22);
-        const point = convergePoint(
-            { x: particle.x, y: particle.y },
-            flow.convergence,
-            particle.phase,
-            1.08,
-        );
-        ctx.fillStyle = `rgba(111, 83, 45, ${alpha * 0.72})`;
-        ctx.beginPath();
-        ctx.rect(point.x - size / 2, point.y - size / 2, size, size);
-        ctx.fill();
+        if (particle.z < 0) {
+            particle.z = 0;
+            particle.vx *= 0.5;
+            particle.vy *= 0.5;
+            particle.vz = 0;
+        }
+
+        const alpha = (1.0 - particle.age / particle.life) * opacity;
+        if (alpha > 0) {
+            state.webglParticles.push({
+                x: particle.x,
+                y: particle.y,
+                z: particle.z,
+                radius: particle.radius,
+                r: 0.4,
+                g: 0.3,
+                b: 0.15,
+                a: alpha * 0.9
+            });
+        }
     }
 
     pruneParticles(state);

@@ -34,15 +34,21 @@ export class CanvasRenderer {
     constructor({
         glyphCanvas,
         effectCanvas,
+        webglCanvas,
         config,
     }: {
         glyphCanvas: HTMLCanvasElement;
         effectCanvas: HTMLCanvasElement;
+        webglCanvas: HTMLCanvasElement;
         config: AppConfig;
     }) {
         this.glyphCanvas = glyphCanvas;
         this.glyphCtx = glyphCanvas.getContext('2d')!;
-        this.effectRenderer = new SpellEffectRenderer(effectCanvas, config);
+        this.effectRenderer = new SpellEffectRenderer(
+            effectCanvas,
+            webglCanvas,
+            config,
+        );
         this.config = config;
     }
 
