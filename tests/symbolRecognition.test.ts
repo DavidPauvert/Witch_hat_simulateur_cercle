@@ -510,4 +510,48 @@ describe('Symbol Recognition', () => {
         expect(recognition.recognitionStatus).toBe('valid_messy');
         expect(recognition.diagnostics.topMatches[0].id).toBe('fire');
     });
+
+    it('recognizes fire sigil even when rotated by 90 degrees', () => {
+        const fire = Object.values(realDictionary.sigils).find(
+            (entry) => entry.id === 'fire',
+        )!;
+        const rotatedFire = cleanCandidateFromTemplate(fire, {
+            rotationDeg: 90,
+        });
+
+        const [recognition] = recognizeCandidates(
+            [rotatedFire],
+            realDictionary,
+            CONFIG,
+        );
+
+        expect(recognition.recognized).toBe(true);
+        expect(recognition.id).toBe('fire');
+        // Expecting some form of 90-degree alignment (90, 270, etc. depending on template symmetry)
+        expect(Math.round(recognition.diagnostics.recognitionRotationDeg) % 180).toBe(90);
+    });
+
+    it('does not mistake a column sign for the earth sigil', () => {
+        const column = Object.values(realDictionary.signs).find(
+            (entry) => entry.id === 'column',
+        )!;
+        
+        const drawnColumn = cleanCandidateFromTemplate(column, {
+            layer: 'middle',
+        });
+
+        const [recognition] = recognizeCandidates(
+            [drawnColumn],
+            realDictionary,
+            CONFIG,
+        );
+
+        expect(recognition.id).toBe('column');
+        const earthMatch = recognition.diagnostics.topMatches.find(m => m.id === 'earth');
+        if (earthMatch) {
+            // Earth should be heavily penalized because column only covers a small part of it.
+            // (Earth has many more strokes than Column)
+            expect(earthMatch.confidence).toBeLessThan(0.45);
+        }
+    });
 });

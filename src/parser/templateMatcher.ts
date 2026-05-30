@@ -510,9 +510,19 @@ export function scoreStrokeTemplate(
             ? clamp(0.62 - (best.unexplainedInkRatio - 0.36) * 0.8, 0.2, 1)
             : 1;
 
+    // Strict penalty for missing ink to prevent partial drawings matching complex templates.
+    const missingInkCap =
+        best.templateCoveredRatio < 0.48
+            ? 0.44
+            : 1;
+
     return {
         available: true,
-        confidence: Math.min(clamp(best.rankingScore), contaminationCap),
+        confidence: Math.min(
+            clamp(best.rankingScore),
+            contaminationCap,
+            missingInkCap,
+        ),
         rotationDeg: best.rotationDeg,
         recognitionRotationDeg: best.rotationDeg,
         inkScore: best.inkScore,

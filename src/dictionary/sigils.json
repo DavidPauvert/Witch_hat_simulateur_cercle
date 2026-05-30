@@ -586,7 +586,7 @@
                 ]
             ]
         },
-        "recognitionRotationInvariant": false,
+        "recognitionRotationInvariant": true,
         "semantic": {
             "force": 0.12,
             "focus": 0.04,
@@ -1216,7 +1216,7 @@
                 [{ "x": 0.4807, "y": 0.989 }]
             ]
         },
-        "recognitionRotationInvariant": false,
+        "recognitionRotationInvariant": true,
         "semantic": {
             "force": 0.02,
             "focus": -0.04,
@@ -2009,7 +2009,7 @@
                 [{ "x": 0.5829, "y": 0.9052 }]
             ]
         },
-        "recognitionRotationInvariant": false,
+        "recognitionRotationInvariant": true,
         "semantic": {
             "force": 0.08,
             "focus": 0.08,
@@ -2648,7 +2648,7 @@
                 ]
             ]
         },
-        "recognitionRotationInvariant": false,
+        "recognitionRotationInvariant": true,
         "semantic": {
             "force": 0.1,
             "focus": 0.1,
@@ -3591,7 +3591,7 @@
                 ]
             ]
         },
-        "recognitionRotationInvariant": false,
+        "recognitionRotationInvariant": true,
         "semantic": {
             "force": 0.02,
             "focus": 0.16,
