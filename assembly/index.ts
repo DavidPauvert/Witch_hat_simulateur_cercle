@@ -243,3 +243,58 @@ export function occupiedCells(
     }
     return cells;
 }
+
+/**
+ * Computes a Manhattan distance transform for a binary mask.
+ */
+export function distanceTransform(mask: Uint8Array, size: i32): Float32Array {
+    const dt = new Float32Array(size * size);
+    const INF: f32 = 10000.0;
+
+    // Initialize
+    for (let i = 0; i < dt.length; i++) {
+        dt[i] = mask[i] ? 0.0 : INF;
+    }
+
+    // Forward pass
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const idx = y * size + x;
+            if (x > 0) dt[idx] = Math.min(dt[idx], dt[idx - 1] + 1.0) as f32;
+            if (y > 0) dt[idx] = Math.min(dt[idx], dt[idx - size] + 1.0) as f32;
+        }
+    }
+
+    // Backward pass
+    for (let y = size - 1; y >= 0; y--) {
+        for (let x = size - 1; x >= 0; x--) {
+            const idx = y * size + x;
+            if (x < size - 1) dt[idx] = Math.min(dt[idx], dt[idx + 1] + 1.0) as f32;
+            if (y < size - 1) dt[idx] = Math.min(dt[idx], dt[idx + size] + 1.0) as f32;
+        }
+    }
+
+    return dt;
+}
+
+/**
+ * Calculates the average distance of ink points in maskA to the nearest ink points in maskB
+ * (using the precomputed distance transform of maskB).
+ */
+export function chamferDistance(
+    maskA: Uint8Array,
+    dtB: Float32Array,
+): f32 {
+    let totalDistance: f32 = 0.0;
+    let count: f32 = 0.0;
+
+    for (let i = 0; i < maskA.length; i++) {
+        if (maskA[i]) {
+            totalDistance += dtB[i];
+            count += 1.0;
+        }
+    }
+
+    if (count == 0.0) return 0.0;
+    return totalDistance / count;
+}

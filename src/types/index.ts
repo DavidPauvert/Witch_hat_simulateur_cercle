@@ -131,6 +131,7 @@ export interface GlobalMetrics {
 export interface GlyphAST {
     type: 'GlyphAST';
     version: string;
+    rings: RingCandidate[];
     ring: RingCandidate;
     candidates: any[];
     primarySigil: RecognitionResult | null;

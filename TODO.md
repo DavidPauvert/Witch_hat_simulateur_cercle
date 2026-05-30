@@ -4,9 +4,9 @@ This document outlines potential improvements and new features to enhance the si
 
 ## 👁️ Parser & Recognition
 
-- [ ] **Distance Transform Matching**: Implement Chamfer Matching or similar distance-based algorithms in `templateMatcher.ts` for more "forgiving" symbol recognition.
-- [ ] **Continuous Rotation Optimization**: Use gradient descent to find the exact optimal rotation of a symbol rather than checking fixed intervals.
-- [ ] **Multi-Ring Support**: Upgrade `ringDetector.ts` to support nested circles or complex multi-ring geometries as seen in the manga's later chapters.
+- [x] **Distance Transform Matching**: Implement Chamfer Matching or similar distance-based algorithms in `templateMatcher.ts` for more "forgiving" symbol recognition.
+- [x] **Continuous Rotation Optimization**: Use gradient descent to find the exact optimal rotation of a symbol rather than checking fixed intervals.
+- [x] **Multi-Ring Support**: Upgrade `ringDetector.ts` to support nested circles or complex multi-ring geometries as seen in the manga's later chapters.
 - [ ] **Gesture Shortcuts**: Add support for quick gestures (like a double-tap or a specific stroke) to clear the canvas or undo the last action.
 
 ## 📱 User Interface & Experience

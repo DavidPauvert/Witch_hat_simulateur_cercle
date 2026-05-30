@@ -310,13 +310,15 @@ export function classifyDrawing({
     config: AppConfig;
 }): ClassificationResult {
     const cleanedStrokes = cleanStrokes(strokes, config);
-    const ring = detectRing(cleanedStrokes, previousRing, config);
+    const rings = detectRing(cleanedStrokes, previousRing, config);
+    const ring = rings[0];
 
     if (!ring.found) {
         // If no circle is found, the spell cannot be processed.
         const glyphAST: GlyphAST = {
             type: 'GlyphAST',
             version: config.appVersion,
+            rings,
             ring,
             candidates: [],
             primarySigil: null,
@@ -387,6 +389,7 @@ export function classifyDrawing({
     const glyphAST = roundedDeep({
         type: 'GlyphAST',
         version: config.appVersion,
+        rings,
         ring,
         candidates: candidates.map(stripCandidate),
         primarySigil: stripRecognitionDiagnostics(primarySigil),

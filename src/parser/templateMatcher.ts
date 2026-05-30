@@ -2,7 +2,9 @@ import { clamp, degreesToRadians, normalizeAngleDeg } from '../utils/geometry';
 import { normalizeStrokesForTemplate } from './templateNormalizer';
 import { Point, Stroke, SymbolCandidate } from '../types';
 import {
+    wasmChamferDistance,
     wasmCountInk,
+    wasmDistanceTransform,
     wasmMaskOverlap,
     wasmOccupiedCells,
     wasmRenderInkLayers,
@@ -28,6 +30,7 @@ interface Ink {
     core: Layer;
     soft: Layer;
     loose: Layer;
+    dt?: Float32Array;
 }
 
 interface CandidateInkCacheEntry {
@@ -125,6 +128,7 @@ function renderInk(
     strokes: Point[][],
     rotationDeg: number = 0,
     size: number = INK_SIZE,
+    computeDT: boolean = false,
 ): Ink {
     const transform = rotationTransform(rotationDeg);
     const flatPoints: number[] = [];
@@ -154,6 +158,9 @@ function renderInk(
             core: { mask: layers.core, ink: countInk(layers.core) },
             soft: { mask: layers.soft, ink: countInk(layers.soft) },
             loose: { mask: layers.loose, ink: countInk(layers.loose) },
+            dt: computeDT
+                ? wasmDistanceTransform(layers.core, size) ?? undefined
+                : undefined,
         };
     }
 
@@ -180,7 +187,8 @@ function templateInk(strokeTemplate: { strokes?: (Stroke | Point[])[] }): Ink {
             digits: 5,
         },
     );
-    const ink = renderInk(normalized.strokes, 0);
+    // Templates always get a distance transform to speed up chamfer matching.
+    const ink = renderInk(normalized.strokes, 0, INK_SIZE, true);
     templateInkCache.set(strokeTemplate, ink);
     return ink;
 }
@@ -303,9 +311,10 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
     const candidateInkCount = candidateInk.core.ink;
     const referenceInkCount = referenceInk.core.ink;
 
-    if (!candidateInkCount || !referenceInkCount) {
+    if (!candidateInkCount || !referenceInkCount || !referenceInk.dt) {
         return {
             inkScore: 0,
+            distanceScore: 0,
             candidateExplainedRatio: 0,
             templateCoveredRatio: 0,
             softDiceScore: 0,
@@ -317,6 +326,15 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
             regionScore: 0,
         };
     }
+
+    // Chamfer distance from candidate to template.
+    const avgDistance = wasmChamferDistance(
+        candidateInk.core.mask,
+        referenceInk.dt,
+    );
+    // Convert distance to a 0-1 score (lower distance = higher score).
+    // A distance of 0 is a 1.0 score, distance of 6+ is 0.0.
+    const distanceScore = clamp(1 - avgDistance / 6);
 
     // How much of the candidate's ink is "explained" by the template's path?
     const candidateExplainedRatio = clamp(
@@ -339,12 +357,13 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
     const missingInkRatio = clamp(1 - templateCoveredRatio);
     const regions = cellStats(candidateInk, referenceInk);
 
-    // Final weighted score balancing detail matching and regional topology.
+    // Final weighted score balancing detail matching, distance, and regional topology.
     const inkScore = clamp(
-        candidateExplainedRatio * 0.32 +
-            templateCoveredRatio * 0.32 +
-            softDiceScore * 0.14 +
-            regions.requiredCellCoverage * 0.16 +
+        distanceScore * 0.22 +
+            candidateExplainedRatio * 0.2 +
+            templateCoveredRatio * 0.2 +
+            softDiceScore * 0.1 +
+            regions.requiredCellCoverage * 0.22 +
             (1 - regions.forbiddenCellInkRatio) * 0.06,
     );
     // High contamination means the candidate has too much ink where it shouldn't,
@@ -357,6 +376,7 @@ function compareInk(candidateInk: Ink, referenceInk: Ink) {
 
     return {
         inkScore,
+        distanceScore,
         candidateExplainedRatio,
         templateCoveredRatio,
         softDiceScore,
@@ -421,7 +441,7 @@ export function scoreStrokeTemplate(
         regionScore: 0,
     };
 
-    // Test each allowed rotation and pick the one with the highest similarity score.
+    // 1. Coarse search: Test each allowed rotation and pick the best one.
     for (const rotationDeg of rotationSet(options)) {
         const inkMatch = compareInk(
             candidateInk(candidate, rotationDeg),
@@ -441,6 +461,47 @@ export function scoreStrokeTemplate(
         }
     }
 
+    // 2. Hill-climbing refinement: fine-tune the best rotation.
+    // We check smaller and smaller steps around the current best to find the local peak.
+    if (best.rankingScore > 0.1) {
+        let currentRotation = best.rotationDeg;
+        const steps = [12, 6, 2, 0.5];
+
+        for (const step of steps) {
+            let localizedBest = { ...best };
+            let foundBetter = false;
+
+            // Check left and right
+            for (const direction of [-1, 1]) {
+                const testAngle = normalizeAngleDeg(
+                    currentRotation + direction * step,
+                );
+                const inkMatch = compareInk(
+                    candidateInk(candidate, testAngle),
+                    referenceInk,
+                );
+                const rotationPenalty =
+                    normalizedRotationMagnitude(testAngle) *
+                    ROTATION_STABILITY_MARGIN;
+                const rankingScore = inkMatch.inkScore - rotationPenalty;
+
+                if (rankingScore > localizedBest.rankingScore) {
+                    localizedBest = {
+                        rotationDeg: testAngle,
+                        rankingScore,
+                        ...inkMatch,
+                    };
+                    foundBetter = true;
+                }
+            }
+
+            if (foundBetter) {
+                best = localizedBest;
+                currentRotation = localizedBest.rotationDeg;
+            }
+        }
+    }
+
     // Complex: Contamination Capping.
     // If the candidate has too much "extra" ink that doesn't belong to the template,
     // we aggressively cap the confidence to prevent false positives (e.g. matching a scribble to a simple line).
@@ -455,6 +516,7 @@ export function scoreStrokeTemplate(
         rotationDeg: best.rotationDeg,
         recognitionRotationDeg: best.rotationDeg,
         inkScore: best.inkScore,
+        distanceScore: (best as any).distanceScore ?? 0,
         softDiceScore: best.softDiceScore,
         candidateExplainedRatio: best.candidateExplainedRatio,
         templateCoveredRatio: best.templateCoveredRatio,

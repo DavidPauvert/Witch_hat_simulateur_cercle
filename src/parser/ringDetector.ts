@@ -766,7 +766,7 @@ export function detectRing(
     strokes: CleanedStroke[],
     previousRing: RingCandidate | null,
     config: AppConfig,
-): RingCandidate {
+): RingCandidate[] {
     const candidates: RingCandidate[] = [];
 
     // 1. Find candidates that look like partial arcs (open rings).
@@ -785,23 +785,24 @@ export function detectRing(
         addTopologicalCandidate(candidates, strokes, config);
     }
     candidates.push(...openCandidates);
-
-    if (!candidates.length) {
-        return {
+if (!candidates.length) {
+    return [
+        {
             found: false,
             complete: false,
             completeness: 0,
             activationEvent: false,
             strokeIds: [],
-            unsupportedNestedRings: [],
             center: { x: 0, y: 0 },
             radius: 0,
             roundness: 0,
             lineSmoothness: 0,
             neatness: 0,
             overdrawAmount: 0,
-        };
-    }
+        },
+    ];
+}
+
 
     // Sort candidates: favor closed loops, then higher quality scores.
     candidates.sort(
@@ -814,33 +815,16 @@ export function detectRing(
     const distinctRings = distinctRingCandidates(candidates);
     const ring = distinctRings[0];
 
-    // Detect and report nested rings or multiple rings which are currently unsupported by the compiler.
-    const unsupportedMultipleRings = distinctRings
-        .slice(1)
-        .map(summarizeUnsupportedRing);
-    const unsupportedNestedRings = distinctRings
-        .slice(1)
-        .filter(
-            (candidate) =>
-                candidate.radius < ring.radius * 0.78 &&
-                candidate.roundness >= 0.68 &&
-                candidate.complete,
-        )
-        .map(summarizeUnsupportedRing);
-
     // An "activation event" occurs exactly when a partial ring is completed for the first time.
     const activationEvent = Boolean(
         previousRing?.found &&
-        !previousRing.complete &&
-        ring.complete &&
-        previousRing.completeness >= ACTIVATION_COMPLETENESS_FLOOR &&
-        unsupportedMultipleRings.length === 0,
+            !previousRing.complete &&
+            ring.complete &&
+            previousRing.completeness >= ACTIVATION_COMPLETENESS_FLOOR &&
+            distinctRings.length === 1,
     );
 
-    return {
-        ...ring,
-        activationEvent,
-        unsupportedNestedRings,
-        unsupportedMultipleRings,
-    };
+    ring.activationEvent = activationEvent;
+
+    return distinctRings;
 }

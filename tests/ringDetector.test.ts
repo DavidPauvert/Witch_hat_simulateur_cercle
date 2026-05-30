@@ -73,8 +73,8 @@ describe('Ring Detector', () => {
     it('detects a sealed ring without outside strokes', () => {
         const openRing = openRingStroke();
         const closing = closingStroke();
-        const prepared = detectRing([openRing] as any, null, CONFIG);
-        const sealed = detectRing([openRing, closing] as any, prepared, CONFIG);
+        const prepared = detectRing([openRing] as any, null, CONFIG)[0];
+        const sealed = detectRing([openRing, closing] as any, prepared, CONFIG)[0];
 
         expect(prepared.found).toBe(true);
         expect(prepared.complete).toBe(false);
@@ -88,8 +88,8 @@ describe('Ring Detector', () => {
     it('keeps a short closing stroke in sealed ring ids', () => {
         const openRing = arcStroke('s1', 400, 300, 180, 5, 355, 180);
         const closing = arcStroke('s2', 400, 300, 180, 355, 365, 8);
-        const prepared = detectRing([openRing] as any, null, CONFIG);
-        const sealed = detectRing([openRing, closing] as any, prepared, CONFIG);
+        const prepared = detectRing([openRing] as any, null, CONFIG)[0];
+        const sealed = detectRing([openRing, closing] as any, prepared, CONFIG)[0];
 
         expect(prepared.found).toBe(true);
         expect(prepared.complete).toBe(false);
@@ -101,16 +101,18 @@ describe('Ring Detector', () => {
     it('reports multiple open rings as unsupported', () => {
         const firstRing = openRingAt('s1', 260, 300);
         const secondRing = openRingAt('s2', 620, 300);
-        const detected = detectRing(
+        const rings = detectRing(
             [firstRing, secondRing] as any,
             null,
             CONFIG,
         );
+        const detected = rings[0];
 
         expect(detected.found).toBe(true);
         expect(detected.complete).toBe(false);
         expect(detected.activationEvent).toBe(false);
-        expect(detected.unsupportedMultipleRings?.length).toBe(1);
+        // Previously we checked unsupportedMultipleRings, now we check the array length.
+        expect(rings.length).toBe(2);
     });
 
     it('does not activate when closing one of multiple rings', () => {
@@ -121,33 +123,34 @@ describe('Ring Detector', () => {
             [firstRing, secondRing] as any,
             null,
             CONFIG,
-        );
-        const sealed = detectRing(
+        )[0];
+        const rings = detectRing(
             [firstRing, secondRing, firstClosingStroke] as any,
             prepared,
             CONFIG,
         );
+        const sealed = rings[0];
 
         expect(sealed.found).toBe(true);
         expect(sealed.activationEvent).toBe(false);
-        expect(sealed.unsupportedMultipleRings?.length).toBe(1);
+        expect(rings.length).toBe(2);
     });
 
     it('ignores outside strokes when sealing a prepared ring', () => {
         const openRing = openRingStroke('s1');
         const outside = outsideStroke('s2');
         const closing = closingStroke('s3');
-        const prepared = detectRing([openRing] as any, null, CONFIG);
+        const prepared = detectRing([openRing] as any, null, CONFIG)[0];
         const preparedWithOutsideMark = detectRing(
             [openRing, outside] as any,
             prepared,
             CONFIG,
-        );
+        )[0];
         const sealed = detectRing(
             [openRing, outside, closing] as any,
             preparedWithOutsideMark,
             CONFIG,
-        );
+        )[0];
 
         expect(preparedWithOutsideMark.found).toBe(true);
         expect(preparedWithOutsideMark.complete).toBe(false);
@@ -164,7 +167,7 @@ describe('Ring Detector', () => {
             [openRing, outside, closing] as any,
             null,
             CONFIG,
-        );
+        )[0];
 
         expect(sealed.complete).toBe(true);
         expect(sealed.activationEvent).toBe(false);

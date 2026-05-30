@@ -21,22 +21,24 @@ function buildGlyphAST({
               element,
           };
 
+    const ring = {
+        found: true,
+        complete: ringComplete,
+        completeness: ringComplete ? 1 : 0.82,
+        neatness: ringNeatness,
+        center: { x: 400, y: 300 },
+        radius: 180,
+        roundness: 0.9,
+        lineSmoothness: 0.9,
+        overdrawAmount: 0.1,
+        strokeIds: ['s1'],
+    } as any;
+
     return {
         type: 'GlyphAST',
         version: CONFIG.appVersion,
-        ring: {
-            found: true,
-            complete: ringComplete,
-            completeness: ringComplete ? 1 : 0.82,
-            neatness: ringNeatness,
-            unsupportedMultipleRings,
-            center: { x: 400, y: 300 },
-            radius: 180,
-            roundness: 0.9,
-            lineSmoothness: 0.9,
-            overdrawAmount: 0.1,
-            strokeIds: ['s1'],
-        } as any,
+        ring,
+        rings: [ring, ...unsupportedMultipleRings],
         primarySigil: primarySigil
             ? ({
                   id: 'fire',
@@ -364,7 +366,7 @@ describe('Spell Builder', () => {
         );
     });
 
-    it('rejects unsupported multiple rings', () => {
+    it('supports multiple rings', () => {
         const spellIR = compileSpell({
             glyphAST: buildGlyphAST({
                 unsupportedMultipleRings: [
@@ -380,11 +382,8 @@ describe('Spell Builder', () => {
             config: CONFIG,
         });
 
-        expect(spellIR.valid).toBe(false);
-        expect(spellIR.status).toBe('Multiple rings detected');
-        expect(spellIR.warnings).toContain(
-            GLYPH_WARNINGS.unsupportedMultipleRings,
-        );
+        expect(spellIR.valid).toBe(true);
+        expect(spellIR.status).toBe('Prepared spell');
     });
 
     it('rejects unsupported multiple sigils', () => {

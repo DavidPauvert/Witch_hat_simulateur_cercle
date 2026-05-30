@@ -202,12 +202,6 @@ export function compileSpell({
     }
 
     // Standard validations: check for errors that prevent spell construction.
-    if (glyphAST.ring.unsupportedMultipleRings?.length) {
-        return invalidSpell('Multiple rings detected', glyphAST, [
-            GLYPH_WARNINGS.unsupportedMultipleRings,
-        ]);
-    }
-
     if (glyphAST.unsupportedMultipleSigils?.length) {
         return invalidSpell('Multiple sigils detected', glyphAST, [
             GLYPH_WARNINGS.unsupportedMultipleSigils,

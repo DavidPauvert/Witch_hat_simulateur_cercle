@@ -134,3 +134,33 @@ export function wasmOccupiedCells(
     }
     return wasmModule.occupiedCells(mask, size, gridSize);
 }
+
+/**
+ * Computes a distance transform of a mask using WASM.
+ *
+ * @param mask - The input binary mask.
+ * @param size - Resolution of the mask.
+ * @returns A Float32Array containing distance values.
+ */
+export function wasmDistanceTransform(
+    mask: Uint8Array,
+    size: number,
+): Float32Array | null {
+    if (!wasmModule) return null;
+    return wasmModule.distanceTransform(mask, size);
+}
+
+/**
+ * Calculates the average distance between two shapes using Chamfer Matching in WASM.
+ *
+ * @param maskA - The candidate mask.
+ * @param dtB - The distance transform of the reference template mask.
+ * @returns The average distance score (lower is better).
+ */
+export function wasmChamferDistance(
+    maskA: Uint8Array,
+    dtB: Float32Array,
+): number {
+    if (!wasmModule) return 10000;
+    return wasmModule.chamferDistance(maskA, dtB);
+}

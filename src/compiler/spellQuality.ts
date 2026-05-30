@@ -53,7 +53,7 @@ function topMatchCompetitorConfidence(
  * @returns A normalized score from 0 to 1.
  */
 export function calculateSpellQuality(glyphAST: GlyphAST): number {
-    const ringQuality = glyphAST.ring?.neatness ?? 0;
+    const ringQuality = mean((glyphAST.rings ?? [glyphAST.ring]).map(r => r.neatness ?? 0));
     const primaryConfidence = glyphAST.primarySigil?.confidence ?? 0;
 
     // Average confidence of all recognized signs.
@@ -99,7 +99,7 @@ export function calculateSpellStability(
     glyphAST: GlyphAST,
     config: AppConfig,
 ): number {
-    const ringNeatness = glyphAST.ring?.neatness ?? 0;
+    const ringNeatness = mean((glyphAST.rings ?? [glyphAST.ring]).map(r => r.neatness ?? 0));
 
     // Average neatness of all recognized symbols (sigil and signs).
     const symbolNeatness = mean(
